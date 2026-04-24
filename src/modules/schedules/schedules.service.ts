@@ -128,6 +128,7 @@ export class SchedulesService {
           movieId: dto.movieId,
           studioId: dto.studioId,
           showTime,
+          endTime,
           basePrice: new Prisma.Decimal(dto.basePrice),
         },
       });
