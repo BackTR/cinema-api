@@ -1,9 +1,11 @@
+// src/modules/schedules/seat-map.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 
 export interface SeatInfo {
-  id: string;
+  id: string;           
+  seatId: string;       
   rowLabel: string;
   seatNumber: number;
   type: string;
@@ -19,7 +21,7 @@ export interface SeatMapResult {
 @Injectable()
 export class SeatMapService {
   private readonly logger = new Logger(SeatMapService.name);
-  private readonly CACHE_TTL = 30; // 30 detik — realtime feel
+  private readonly CACHE_TTL = 30;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -37,21 +39,36 @@ export class SeatMapService {
     const scheduleSeats = await this.prisma.scheduleSeat.findMany({
       where: { scheduleId },
       include: {
-        seat: { select: { id: true, rowLabel: true, seatNumber: true, type: true } },
+        seat: {
+          select: {
+            id: true,
+            rowLabel: true,
+            seatNumber: true,
+            type: true,
+          },
+        },
       },
-      orderBy: [{ seat: { rowLabel: 'asc' } }, { seat: { seatNumber: 'asc' } }],
+      orderBy: [
+        { seat: { rowLabel: 'asc' } },
+        { seat: { seatNumber: 'asc' } },
+      ],
     });
 
-    // Group by row label: { A: [...], B: [...] }
     const rows: Record<string, SeatInfo[]> = {};
-    const summary = { available: 0, locked: 0, booked: 0, total: scheduleSeats.length };
+    const summary = {
+      available: 0,
+      locked: 0,
+      booked: 0,
+      total: scheduleSeats.length,
+    };
 
     for (const ss of scheduleSeats) {
       const row = ss.seat.rowLabel;
       if (!rows[row]) rows[row] = [];
 
       rows[row].push({
-        id: ss.seat.id,
+        id: ss.id,           
+        seatId: ss.seat.id,  
         rowLabel: ss.seat.rowLabel,
         seatNumber: ss.seat.seatNumber,
         type: ss.seat.type,

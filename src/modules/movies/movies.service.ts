@@ -1,9 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CreateMovieDto } from './dto/create-movie.dto';
@@ -35,7 +30,6 @@ export class MoviesService {
     const { search, genre, rating, isActive, page, limit } = query;
     const skip = (page - 1) * limit;
 
-    // Cache key berdasarkan query params
     const cacheKey = `movies:list:${JSON.stringify(query)}`;
     const cached = await this.redis.client.get(cacheKey);
     if (cached) {
@@ -70,7 +64,6 @@ export class MoviesService {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
 
-    // Simpan ke cache
     await this.redis.client.setex(cacheKey, this.CACHE_TTL, JSON.stringify(result));
 
     return result;
@@ -89,17 +82,32 @@ export class MoviesService {
   }
 
   async create(dto: CreateMovieDto): Promise<Movie> {
-    // Cek duplikat judul + tanggal rilis
     const existing = await this.prisma.movie.findFirst({
       where: {
         title: { equals: dto.title, mode: 'insensitive' },
         releaseDate: new Date(dto.releaseDate),
       },
     });
-    if (existing) throw new ConflictException('Film dengan judul dan tanggal rilis yang sama sudah ada');
+    if (existing) {
+      throw new ConflictException('Film dengan judul dan tanggal rilis yang sama sudah ada');
+    }
 
     const movie = await this.prisma.movie.create({
-      data: { ...dto, releaseDate: new Date(dto.releaseDate) },
+      data: {
+        title: dto.title,
+        synopsis: dto.synopsis,
+        durationMinutes: dto.durationMinutes,
+        genre: dto.genre,
+        rating: dto.rating,
+        releaseDate: new Date(dto.releaseDate),
+        language: dto.language ?? 'INDONESIA',
+        format: dto.format ?? 'TWO_D',
+        trailerUrl: dto.trailerUrl ?? null,
+        posterUrl: dto.posterUrl ?? null,
+        director: dto.director ?? null,
+        cast: dto.cast ?? null,
+        endDate: dto.endDate ? new Date(dto.endDate) : null,
+      },
     });
 
     await this.invalidateListCache();
@@ -108,21 +116,18 @@ export class MoviesService {
   }
 
   async update(id: string, dto: UpdateMovieDto): Promise<Movie> {
-    await this.findOne(id); // throw 404 jika tidak ada
+    await this.findOne(id);
 
     const movie = await this.prisma.movie.update({
       where: { id },
       data: {
         ...dto,
         ...(dto.releaseDate && { releaseDate: new Date(dto.releaseDate) }),
+        ...(dto.endDate && { endDate: new Date(dto.endDate) }),
       },
     });
 
-    // Invalidate cache film ini + list
-    await Promise.all([
-      this.redis.client.del(`movies:${id}`),
-      this.invalidateListCache(),
-    ]);
+    await Promise.all([this.redis.client.del(`movies:${id}`), this.invalidateListCache()]);
 
     return movie;
   }
@@ -130,21 +135,16 @@ export class MoviesService {
   async remove(id: string): Promise<void> {
     await this.findOne(id);
 
-    // Soft delete — set isActive = false
     await this.prisma.movie.update({
       where: { id },
       data: { isActive: false },
     });
 
-    await Promise.all([
-      this.redis.client.del(`movies:${id}`),
-      this.invalidateListCache(),
-    ]);
+    await Promise.all([this.redis.client.del(`movies:${id}`), this.invalidateListCache()]);
 
     this.logger.log(`Movie deactivated: ${id}`);
   }
 
-  // Hapus semua cache list movies (pattern delete)
   private async invalidateListCache(): Promise<void> {
     const keys = await this.redis.client.keys('movies:list:*');
     if (keys.length > 0) await this.redis.client.del(...keys);
