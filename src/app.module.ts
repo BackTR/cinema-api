@@ -9,6 +9,7 @@ import { MoviesModule } from './modules/movies/movies.module';
 import { SchedulesModule } from './modules/schedules/schedules.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { QueueModule } from './queues/queue.module';
+import { PaymentModule } from '@modules/payment/payment.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { QueueModule } from './queues/queue.module';
     MoviesModule,
     SchedulesModule,
     BookingModule,
+    PaymentModule,
     QueueModule,
   ],
 })
