@@ -1,9 +1,11 @@
+// src/queues/queue.module.ts
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BookingExpireProcessor } from './booking-expire.processor';
-import { BookingService } from '../modules/booking/booking.service';
-import { SeatLockService } from '../modules/booking/seat-lock.service';
+import { GenerateTicketProcessor } from './generate-ticket.processor';
+import { BookingModule } from '../modules/booking/booking.module';
+import { NotificationModule } from '../modules/notification/notification.module';
 
 @Module({
   imports: [
@@ -18,9 +20,11 @@ import { SeatLockService } from '../modules/booking/seat-lock.service';
       }),
       inject: [ConfigService],
     }),
-    BullModule.registerQueue({ name: 'booking' }),
+    BullModule.registerQueue({ name: 'booking' }, { name: 'ticket' }),
+    BookingModule,
+    NotificationModule,
   ],
-  providers: [BookingExpireProcessor, BookingService, SeatLockService],
+  providers: [BookingExpireProcessor, GenerateTicketProcessor],
   exports: [BullModule],
 })
 export class QueueModule {}

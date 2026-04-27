@@ -10,6 +10,8 @@ import { SchedulesModule } from './modules/schedules/schedules.module';
 import { BookingModule } from './modules/booking/booking.module';
 import { QueueModule } from './queues/queue.module';
 import { PaymentModule } from '@modules/payment/payment.module';
+import { TicketModule } from '@modules/ticket/ticket.module';
+import { NotificationModule } from '@modules/notification/notification.module';
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { PaymentModule } from '@modules/payment/payment.module';
     AuthModule,
     MoviesModule,
     SchedulesModule,
+    TicketModule,
+    NotificationModule,
     BookingModule,
     PaymentModule,
     QueueModule,
