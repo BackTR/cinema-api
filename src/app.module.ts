@@ -12,6 +12,7 @@ import { QueueModule } from './queues/queue.module';
 import { PaymentModule } from '@modules/payment/payment.module';
 import { TicketModule } from '@modules/ticket/ticket.module';
 import { NotificationModule } from '@modules/notification/notification.module';
+import { AdminModule } from '@modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { NotificationModule } from '@modules/notification/notification.module';
     NotificationModule,
     BookingModule,
     PaymentModule,
+    AdminModule,
     QueueModule,
   ],
 })
