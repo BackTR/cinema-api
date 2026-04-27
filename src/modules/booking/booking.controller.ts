@@ -1,6 +1,15 @@
 import {
-  Controller, Post, Get, Patch,
-  Body, Param, Query, HttpCode, HttpStatus, UseGuards,
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Body,
+  Param,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  Res,
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { CreateBookingSchema, CreateBookingDto } from './dto/create-booking.dto';
@@ -8,11 +17,16 @@ import { CancelBookingSchema, CancelBookingDto } from './dto/cancel-booking.dto'
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { TicketService } from '../ticket/ticket.service';
+import { Response } from 'express';
 
 @Controller('bookings')
-@UseGuards(JwtAuthGuard) // semua endpoint butuh auth
+@UseGuards(JwtAuthGuard)
 export class BookingController {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(
+    private readonly bookingService: BookingService,
+    private readonly ticketService: TicketService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -36,6 +50,24 @@ export class BookingController {
     );
   }
 
+
+  @Get(':bookingCode/ticket')
+  async downloadTicket(
+    @Param('bookingCode') bookingCode: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.bookingService.findOne(bookingCode, user.sub);
+    const pdfBuffer = await this.ticketService.generateTicketPdf(bookingCode);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="eticket-${bookingCode}.pdf"`,
+    );
+    res.end(pdfBuffer);
+  }
+
+ 
   @Get(':bookingCode')
   async findOne(
     @Param('bookingCode') bookingCode: string,

@@ -6,6 +6,8 @@ import { BookingStatus, PaymentStatus } from '@prisma/client';
 import { MIDTRANS_CLIENT } from './midtrans.provider';
 import * as Midtrans from 'midtrans-client';
 import { Prisma } from '@prisma/client';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 export interface MidtransNotification {
   order_id: string;
@@ -32,6 +34,7 @@ export class PaymentService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Inject(MIDTRANS_CLIENT) private readonly midtrans: Midtrans.Snap,
+    @InjectQueue('ticket') private readonly ticketQueue: Queue,
   ) {}
 
   async initiatePayment(bookingCode: string, userId: string) {
@@ -204,6 +207,12 @@ export class PaymentService {
         data: { status: 'BOOKED', lockedBy: null, lockedUntil: null },
       });
     });
+
+    await this.ticketQueue.add(
+      'generate-tickets',
+      { bookingCode },
+      { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+    );
 
     this.logger.log(`Payment SUCCESS: booking ${bookingCode} CONFIRMED`);
   }
