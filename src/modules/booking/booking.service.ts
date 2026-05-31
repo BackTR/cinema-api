@@ -14,6 +14,7 @@ import { BookingStatus, Prisma } from '@prisma/client';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { nanoid } from 'nanoid';
+import { SeatMapService } from '@modules/schedules/seat-map.service';
 
 const BOOKING_EXPIRY_MINUTES = 10;
 
@@ -24,6 +25,7 @@ export class BookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly seatLock: SeatLockService,
+    private readonly seatMapService: SeatMapService,
     @InjectQueue('booking') private readonly bookingQueue: Queue,
   ) {}
 
@@ -139,6 +141,9 @@ export class BookingService {
         return newBooking;
       });
 
+      // Invalidate seat map cache
+      await this.seatMapService.invalidateSeatMap(scheduleId);
+      
       // Dispatch expire job SETELAH transaction sukses — bookingId sudah ada
       await this.bookingQueue.add(
         'expire-booking',
@@ -274,6 +279,8 @@ export class BookingService {
         data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
       });
     });
+    
+    await this.seatMapService.invalidateSeatMap(booking.scheduleId);
 
     // Release Redis lock
     await this.seatLock.releaseSeats(scheduleSeatIds, userId);
@@ -285,28 +292,34 @@ export class BookingService {
 
   // Dipanggil oleh BullMQ processor saat booking expired
   async expireBooking(bookingId: string, scheduleSeatIds: string[]): Promise<void> {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id: bookingId },
-    });
+  const booking = await this.prisma.booking.findUnique({
+    where: { id: bookingId },
+  });
 
-    // Hanya expire jika masih PENDING
-    if (!booking || booking.status !== BookingStatus.PENDING) return;
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          status: BookingStatus.EXPIRED,
-          expiredAt: new Date(),
-        },
-      });
-
-      await tx.scheduleSeat.updateMany({
-        where: { id: { in: scheduleSeatIds } },
-        data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
-      });
-    });
-
-    this.logger.log(`Booking expired: ${bookingId}`);
+  // Guard — hanya expire jika masih PENDING
+  if (!booking || booking.status !== BookingStatus.PENDING) {
+    this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
+    return;
   }
+
+  await this.prisma.$transaction(async (tx) => {
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        status: BookingStatus.EXPIRED,
+        expiredAt: new Date(),
+      },
+    });
+
+    await tx.scheduleSeat.updateMany({
+      where: { id: { in: scheduleSeatIds } },
+      data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+    });
+  });
+
+  // ← Fix poin 1: release Redis lock setelah expire
+  await this.seatLock.releaseSeats(scheduleSeatIds, booking.userId);
+
+  this.logger.log(`Booking expired: ${bookingId} — seats released`);
+}
 }

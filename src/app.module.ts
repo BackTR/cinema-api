@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -13,6 +13,7 @@ import { PaymentModule } from '@modules/payment/payment.module';
 import { TicketModule } from '@modules/ticket/ticket.module';
 import { NotificationModule } from '@modules/notification/notification.module';
 import { AdminModule } from '@modules/admin/admin.module';
+import { APP_GUARD } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -43,6 +44,12 @@ import { AdminModule } from '@modules/admin/admin.module';
     PaymentModule,
     AdminModule,
     QueueModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    }
   ],
 })
 export class AppModule {}

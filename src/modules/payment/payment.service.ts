@@ -8,6 +8,8 @@ import * as Midtrans from 'midtrans-client';
 import { Prisma } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { SeatMapService } from '@modules/schedules/seat-map.service';
+
 
 export interface MidtransNotification {
   order_id: string;
@@ -35,6 +37,7 @@ export class PaymentService {
     private readonly config: ConfigService,
     @Inject(MIDTRANS_CLIENT) private readonly midtrans: Midtrans.Snap,
     @InjectQueue('ticket') private readonly ticketQueue: Queue,
+    private readonly setMapService: SeatMapService,
   ) {}
 
   async initiatePayment(bookingCode: string, userId: string) {
@@ -186,9 +189,22 @@ export class PaymentService {
   }
 
   private async handlePaymentSuccess(
-    booking: { id: string; seats: { scheduleSeat: { id: string } }[] },
+    booking: { id: string; scheduleId: string; seats: { scheduleSeat: { id: string } }[] },
     bookingCode: string,
   ): Promise<void> {
+
+    const currentBooking = await this.prisma.booking.findUnique({
+    where: { id: booking.id },
+    select: { status: true },
+  });
+
+  if (!currentBooking || currentBooking.status !== BookingStatus.PENDING) {
+    this.logger.warn(
+      `Webhook skip: booking ${bookingCode} status is ${currentBooking?.status}`,
+    );
+    return;
+  }
+
     const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
 
     await this.prisma.$transaction(async (tx) => {
@@ -206,7 +222,20 @@ export class PaymentService {
         where: { id: { in: scheduleSeatIds } },
         data: { status: 'BOOKED', lockedBy: null, lockedUntil: null },
       });
+
+      const availableCount = await tx.scheduleSeat.count({
+      where: { scheduleId: booking.scheduleId, status: 'AVAILABLE' },
     });
+
+    if (availableCount === 0) {
+      await tx.schedule.update({
+        where: { id: booking.scheduleId },
+        data: { isSoldOut: true },
+      });
+    }
+    });
+
+    await this.setMapService.invalidateSeatMap(booking.scheduleId);
 
     await this.ticketQueue.add(
       'generate-tickets',
@@ -218,7 +247,7 @@ export class PaymentService {
   }
 
   private async handlePaymentFailed(
-    booking: { id: string; seats: { scheduleSeat: { id: string } }[] },
+    booking: { id: string; scheduleId: string; seats: { scheduleSeat: { id: string } }[] },
     bookingCode: string,
   ): Promise<void> {
     const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
@@ -243,7 +272,7 @@ export class PaymentService {
         data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
       });
     });
-
+    await this.setMapService.invalidateSeatMap(booking.scheduleId);
     this.logger.log(`Payment FAILED: booking ${bookingCode} CANCELLED`);
   }
 }
