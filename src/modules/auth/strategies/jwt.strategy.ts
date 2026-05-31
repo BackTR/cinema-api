@@ -19,13 +19,18 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: JwtPayload): Promise<JwtPayload> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true },
-    });
+  const user = await this.prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: { id: true, isActive: true }, // ← tambah isActive
+  });
 
-    if (!user) throw new UnauthorizedException('User tidak ditemukan');
+  if (!user) throw new UnauthorizedException('User tidak ditemukan');
 
-    return payload;
+  // ← Fix poin 8: tolak user nonaktif
+  if (!user.isActive) {
+    throw new UnauthorizedException('Akun Anda telah dinonaktifkan');
+  }
+
+  return payload;
   }
 }

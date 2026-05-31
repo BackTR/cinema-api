@@ -20,51 +20,58 @@ export class SchedulesService {
   ) {}
 
   async findAll(query: QueryScheduleDto): Promise<PaginatedResult<Schedule>> {
-    const { movieId, cinemaId, date, page, limit } = query;
-    const skip = (page - 1) * limit;
+  const { movieId, cinemaId, date, page, limit } = query;
+  const skip = (page - 1) * limit;
 
-    const where: Prisma.ScheduleWhereInput = {
-      isActive: true,
-      ...(movieId && { movieId }),
-      ...(cinemaId && { studio: { cinemaId } }),
-      ...(date && {
-        showTime: {
-          gte: new Date(`${date}T00:00:00.000Z`),
-          lte: new Date(`${date}T23:59:59.999Z`),
-        },
-      }),
-      // Hanya tampilkan jadwal yang belum lewat
-      showTime: { gte: new Date() },
-    };
+  // ← Fix poin 3 & 19: pisahkan filter date dan filter future
+  let showTimeFilter: Prisma.ScheduleWhereInput['showTime'];
 
-    const [schedules, total] = await Promise.all([
-      this.prisma.schedule.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { showTime: 'asc' },
-        include: {
-          movie: {
-            select: { id: true, title: true, durationMinutes: true, rating: true, posterUrl: true },
-          },
-          studio: {
-            select: {
-              id: true,
-              name: true,
-              type: true,
-              cinema: { select: { id: true, name: true, city: true } },
-            },
-          },
-        },
-      }),
-      this.prisma.schedule.count({ where }),
-    ]);
-
-    return {
-      data: schedules,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-    };
+  if (date) {
+    // Filter by date dengan timezone WIB (UTC+7)
+    const startOfDay = new Date(`${date}T00:00:00+07:00`);
+    const endOfDay = new Date(`${date}T23:59:59+07:00`);
+    showTimeFilter = { gte: startOfDay, lte: endOfDay };
+  } else {
+    // Default: tampilkan jadwal yang belum lewat
+    showTimeFilter = { gte: new Date() };
   }
+
+  const where: Prisma.ScheduleWhereInput = {
+    isActive: true,
+    showTime: showTimeFilter,
+    ...(movieId && { movieId }),
+    ...(cinemaId && { studio: { cinemaId } }),
+  };
+
+  const [schedules, total] = await Promise.all([
+    this.prisma.schedule.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { showTime: 'asc' },
+      include: {
+        movie: {
+          select: {
+            id: true, title: true, durationMinutes: true,
+            rating: true, posterUrl: true,
+          },
+        },
+        studio: {
+          select: {
+            id: true, name: true, type: true,
+            cinema: { select: { id: true, name: true, city: true } },
+          },
+        },
+      },
+    }),
+    this.prisma.schedule.count({ where }),
+  ]);
+
+  return {
+    data: schedules,
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  };
+}
 
   async findOne(id: string): Promise<Schedule> {
     const schedule = await this.prisma.schedule.findUnique({

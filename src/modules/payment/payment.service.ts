@@ -8,6 +8,7 @@ import * as Midtrans from 'midtrans-client';
 import { Prisma } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { SeatMapService } from '@modules/schedules/seat-map.service';
 
 export interface MidtransNotification {
   order_id: string;
@@ -33,6 +34,7 @@ export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly seatMapService: SeatMapService,
     @Inject(MIDTRANS_CLIENT) private readonly midtrans: Midtrans.Snap,
     @InjectQueue('ticket') private readonly ticketQueue: Queue,
   ) {}
@@ -186,64 +188,93 @@ export class PaymentService {
   }
 
   private async handlePaymentSuccess(
-    booking: { id: string; seats: { scheduleSeat: { id: string } }[] },
-    bookingCode: string,
-  ): Promise<void> {
-    const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
+  booking: { id: string; scheduleId: string; seats: { scheduleSeat: { id: string } }[] },
+  bookingCode: string,
+): Promise<void> {
+  // ← Fix poin 2: cek status booking sebelum konfirmasi
+  const currentBooking = await this.prisma.booking.findUnique({
+    where: { id: booking.id },
+    select: { status: true },
+  });
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.booking.update({
-        where: { id: booking.id },
-        data: { status: BookingStatus.CONFIRMED },
-      });
-
-      await tx.payment.update({
-        where: { bookingId: booking.id },
-        data: { status: PaymentStatus.PAID, paidAt: new Date() },
-      });
-
-      await tx.scheduleSeat.updateMany({
-        where: { id: { in: scheduleSeatIds } },
-        data: { status: 'BOOKED', lockedBy: null, lockedUntil: null },
-      });
-    });
-
-    await this.ticketQueue.add(
-      'generate-tickets',
-      { bookingCode },
-      { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+  if (!currentBooking || currentBooking.status !== BookingStatus.PENDING) {
+    this.logger.warn(
+      `Webhook skip: booking ${bookingCode} status is ${currentBooking?.status}`,
     );
-
-    this.logger.log(`Payment SUCCESS: booking ${bookingCode} CONFIRMED`);
+    return;
   }
 
-  private async handlePaymentFailed(
-    booking: { id: string; seats: { scheduleSeat: { id: string } }[] },
-    bookingCode: string,
-  ): Promise<void> {
-    const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
+  const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          status: BookingStatus.CANCELLED,
-          cancelledAt: new Date(),
-          cancellationReason: 'Pembayaran gagal atau dibatalkan',
-        },
-      });
-
-      await tx.payment.update({
-        where: { bookingId: booking.id },
-        data: { status: PaymentStatus.FAILED },
-      });
-
-      await tx.scheduleSeat.updateMany({
-        where: { id: { in: scheduleSeatIds } },
-        data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
-      });
+  await this.prisma.$transaction(async (tx) => {
+    await tx.booking.update({
+      where: { id: booking.id },
+      data: { status: BookingStatus.CONFIRMED },
     });
 
-    this.logger.log(`Payment FAILED: booking ${bookingCode} CANCELLED`);
+    await tx.payment.update({
+      where: { bookingId: booking.id },
+      data: { status: PaymentStatus.PAID, paidAt: new Date() },
+    });
+
+    await tx.scheduleSeat.updateMany({
+      where: { id: { in: scheduleSeatIds } },
+      data: { status: 'BOOKED', lockedBy: null, lockedUntil: null },
+    });
+
+    // ← Fix poin 20: update isSoldOut jika semua kursi sudah BOOKED
+    const availableCount = await tx.scheduleSeat.count({
+      where: { scheduleId: booking.scheduleId, status: 'AVAILABLE' },
+    });
+
+    if (availableCount === 0) {
+      await tx.schedule.update({
+        where: { id: booking.scheduleId },
+        data: { isSoldOut: true },
+      });
+    }
+  });
+
+  // ← Fix poin 4: invalidate seat map cache
+  await this.seatMapService.invalidateSeatMap(booking.scheduleId);
+
+  await this.ticketQueue.add(
+    'generate-ticket',
+    { bookingCode },
+    { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+  );
+
+  this.logger.log(`Payment SUCCESS: booking ${bookingCode} CONFIRMED`);
+}
+
+private async handlePaymentFailed(
+  booking: { id: string; scheduleId: string; seats: { scheduleSeat: { id: string } }[] },
+  bookingCode: string,
+): Promise<void> {
+  const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
+
+  await this.prisma.$transaction(async (tx) => {
+    await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        status: BookingStatus.CANCELLED,
+        cancelledAt: new Date(),
+        cancellationReason: 'Pembayaran gagal atau dibatalkan',
+      },
+    });
+    await tx.payment.update({
+      where: { bookingId: booking.id },
+      data: { status: PaymentStatus.FAILED },
+    });
+    await tx.scheduleSeat.updateMany({
+      where: { id: { in: scheduleSeatIds } },
+      data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+    });
+  });
+
+  // ← Fix poin 4: invalidate seat map cache
+  await this.seatMapService.invalidateSeatMap(booking.scheduleId);
+
+  this.logger.log(`Payment FAILED: booking ${bookingCode} CANCELLED`);
   }
 }
