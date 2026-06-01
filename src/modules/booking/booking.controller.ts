@@ -57,30 +57,36 @@ export class BookingController {
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ): Promise<void> {
-  const booking = await this.bookingService.findOne(bookingCode, user.sub);
+    const booking = await this.bookingService.findOne(
+      bookingCode,
+      user.sub,
+      user.role,
+    );
 
-  // ← Fix poin 9: hanya booking CONFIRMED yang bisa download
-  if (booking.status !== 'CONFIRMED') {
-    res.status(400).json({
-      success: false,
-      message: `Tiket hanya tersedia untuk booking yang sudah dikonfirmasi. Status saat ini: ${booking.status}`,
-    });
-    return;
+    if (booking.status !== 'CONFIRMED') {
+      res.status(400).json({
+        success: false,
+        message: `Tiket hanya tersedia untuk booking CONFIRMED. Status: ${booking.status}`,
+      });
+      return;
+    }
+
+    const pdfBuffer = await this.ticketService.generateTicketPdf(bookingCode);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="eticket-${bookingCode}.pdf"`,
+    );
+    res.end(pdfBuffer);
   }
 
-  const pdfBuffer = await this.ticketService.generateTicketPdf(bookingCode);
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="eticket-${bookingCode}.pdf"`);
-  res.end(pdfBuffer);
-}
 
- 
   @Get(':bookingCode')
   async findOne(
     @Param('bookingCode') bookingCode: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.bookingService.findOne(bookingCode, user.sub);
+    return this.bookingService.findOne(bookingCode, user.sub, user.role);
   }
 
   @Patch(':bookingCode/cancel')

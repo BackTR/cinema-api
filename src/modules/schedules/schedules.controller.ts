@@ -47,6 +47,11 @@ export class SchedulesController {
     return this.schedulesService.getSeatMap(id);
   }
 
+  @Get(':id/pricing')
+  async getPricingRules(@Param('id') id: string) {
+    return this.schedulesService.getPricingRules(id);
+  }
+
   // Admin only
   @Post()
   @HttpCode(HttpStatus.CREATED)

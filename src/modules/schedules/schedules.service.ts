@@ -70,8 +70,8 @@ export class SchedulesService {
   return {
     data: schedules,
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
-  };
-}
+    };
+  }
 
   async findOne(id: string): Promise<Schedule> {
     const schedule = await this.prisma.schedule.findUnique({
@@ -86,7 +86,6 @@ export class SchedulesService {
   }
 
   async create(dto: CreateScheduleDto): Promise<Schedule> {
-    // Validasi movie & studio ada
     const [movie, studio] = await Promise.all([
       this.prisma.movie.findUnique({ where: { id: dto.movieId } }),
       this.prisma.studio.findUnique({
@@ -99,36 +98,29 @@ export class SchedulesService {
     if (!studio) throw new NotFoundException('Studio tidak ditemukan');
 
     const showTime = new Date(dto.showTime);
-    const endTime = new Date(showTime.getTime() + movie.durationMinutes * 60 * 1000);
+    const endTime = new Date(
+      showTime.getTime() + movie.durationMinutes * 60 * 1000,
+    );
 
-    // Cek studio tidak bentrok jadwal
+    // Fix: proper interval overlap detection
+    // Overlap terjadi jika: startA < endB AND endA > startB
     const conflict = await this.prisma.schedule.findFirst({
       where: {
         studioId: dto.studioId,
         isActive: true,
-        OR: [
-          // Jadwal baru mulai saat jadwal lain sedang berjalan
-          {
-            showTime: { lte: showTime },
-            AND: [
-              {
-                showTime: { gte: new Date(showTime.getTime() - movie.durationMinutes * 60 * 1000) },
-              },
-            ],
-          },
+        AND: [
+          { showTime: { lt: endTime } },   // jadwal lama mulai sebelum jadwal baru selesai
+          { endTime: { gt: showTime } },   // jadwal lama selesai setelah jadwal baru mulai
         ],
-        showTime: {
-          gte: new Date(showTime.getTime() - 180 * 60 * 1000), // buffer 3 jam
-          lte: endTime,
-        },
       },
     });
 
     if (conflict) {
-      throw new ConflictException('Studio sudah memiliki jadwal yang bentrok pada waktu tersebut');
+      throw new ConflictException(
+        `Studio sudah ada jadwal yang bentrok: ${conflict.showTime.toISOString()} — ${conflict.endTime.toISOString()}`,
+      );
     }
 
-    // Buat schedule + auto-generate ScheduleSeat untuk semua kursi di studio
     const schedule = await this.prisma.$transaction(async (tx) => {
       const newSchedule = await tx.schedule.create({
         data: {
@@ -140,7 +132,6 @@ export class SchedulesService {
         },
       });
 
-      // Generate ScheduleSeat untuk setiap kursi
       await tx.scheduleSeat.createMany({
         data: studio.seats.map((seat) => ({
           scheduleId: newSchedule.id,
@@ -149,7 +140,9 @@ export class SchedulesService {
         })),
       });
 
-      this.logger.log(`Schedule created: ${newSchedule.id} with ${studio.seats.length} seats`);
+      this.logger.log(
+        `Schedule created: ${newSchedule.id} with ${studio.seats.length} seats`,
+      );
       return newSchedule;
     });
 
@@ -167,5 +160,24 @@ export class SchedulesService {
       where: { id },
       data: { isActive: false },
     });
+  }
+
+    async getPricingRules(scheduleId: string) {
+    const schedule = await this.prisma.schedule.findUnique({
+      where: { id: scheduleId },
+      include: {
+        pricingRules: {
+          where: { isActive: true },
+          select: { seatType: true, price: true },
+        },
+      },
+    });
+
+    if (!schedule) throw new NotFoundException('Jadwal tidak ditemukan');
+
+    return {
+      basePrice: schedule.basePrice,
+      pricingRules: schedule.pricingRules,
+    };
   }
 }
