@@ -162,6 +162,25 @@ export class SchedulesService {
     });
   }
 
+    async getCinemas() {
+      return this.prisma.cinema.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          latitude: true,
+          longitude: true,
+          studios: {
+            where: { isActive: true },
+            select: { id: true, name: true, type: true },
+          },
+        },
+        orderBy: { city: 'asc' },
+      });
+    }
+
     async getPricingRules(scheduleId: string) {
     const schedule = await this.prisma.schedule.findUnique({
       where: { id: scheduleId },
@@ -180,4 +199,29 @@ export class SchedulesService {
       pricingRules: schedule.pricingRules,
     };
   }
+
+    async createPricingRule(
+      scheduleId: string,
+      dto: { seatType: 'REGULAR' | 'VIP'; pricingType: string; price: number },
+    ) {
+      await this.findOne(scheduleId);
+
+      return this.prisma.pricingRule.upsert({
+        where: {
+          scheduleId_seatType_pricingType: {
+            scheduleId,
+            seatType: dto.seatType,
+            pricingType: dto.pricingType as 'BASE',
+          },
+        },
+        update: { price: new Prisma.Decimal(dto.price) },
+        create: {
+          scheduleId,
+          seatType: dto.seatType,
+          pricingType: dto.pricingType as 'BASE',
+          price: new Prisma.Decimal(dto.price),
+          isActive: true,
+        },
+      });
+    }
 }

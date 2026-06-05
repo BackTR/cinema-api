@@ -20,6 +20,8 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { Role, Schedule } from '@prisma/client';
 import { SeatMapResult } from './seat-map.service';
 
+
+
 interface PaginatedSchedules {
   data: Schedule[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -52,6 +54,11 @@ export class SchedulesController {
     return this.schedulesService.getPricingRules(id);
   }
 
+  @Get('cinemas')
+  async getCinemas() {
+    return this.schedulesService.getCinemas();
+  }
+
   // Admin only
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -69,5 +76,16 @@ export class SchedulesController {
   @Roles(Role.ADMIN)
   async deactivate(@Param('id') id: string): Promise<void> {
     await this.schedulesService.deactivate(id);
+  }
+
+  @Post(':id/pricing')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  async createPricingRule(
+    @Param('id') id: string,
+    @Body() dto: { seatType: 'REGULAR' | 'VIP'; pricingType: string; price: number },
+  ) {
+    return this.schedulesService.createPricingRule(id, dto);
   }
 }
