@@ -1,16 +1,20 @@
-# Dockerfile — Backend
+# Stage 1 — Builder
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+
+# Pakai npm install untuk lebih toleran terhadap lock file differences
+RUN npm install && npm cache clean --force
 
 COPY . .
+
 RUN npx prisma generate
 RUN npm run build
+RUN npm prune --production
 
-# Production image
+# Stage 2 — Production
 FROM node:20-alpine AS production
 
 WORKDIR /app
