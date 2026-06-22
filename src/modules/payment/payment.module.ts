@@ -4,7 +4,7 @@ import { PaymentService } from './payment.service';
 import { MidtransProvider } from './midtrans.provider';
 import { BookingModule } from '../booking/booking.module';
 import { BullModule } from '@nestjs/bullmq';
-import { SchedulesModule } from '@modules/schedules/schedules.module';
+import { SchedulesModule } from '../schedules/schedules.module';
 
 @Module({
   imports: [

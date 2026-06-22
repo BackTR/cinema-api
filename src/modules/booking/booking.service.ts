@@ -14,7 +14,7 @@ import { BookingStatus, Prisma, Role } from '@prisma/client';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { nanoid } from 'nanoid';
-import { SeatMapService } from '@modules/schedules/seat-map.service';
+import { SeatMapService } from '../schedules/seat-map.service';
 
 const BOOKING_EXPIRY_MINUTES = 10;
 

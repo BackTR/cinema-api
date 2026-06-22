@@ -8,7 +8,7 @@ import * as Midtrans from 'midtrans-client';
 import { Prisma } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { SeatMapService } from '@modules/schedules/seat-map.service';
+import { SeatMapService } from '../schedules/seat-map.service';
 
 export interface MidtransNotification {
   order_id: string;
