@@ -72,20 +72,29 @@ enum PricingType {
   PROMOTION
 }
 
+enum AuthProvider {
+  GOOGLE
+  FACEBOOK
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
-  id              String    @id @default(uuid()) @db.Uuid
+  id              String        @id @default(uuid()) @db.Uuid
   name            String
-  email           String    @unique
-  phone           String?
-  passwordHash    String    @map("password_hash")
-  role            Role      @default(CUSTOMER)
-  isActive        Boolean   @default(true) @map("is_active")
-  avatarUrl       String?   @map("avatar_url")
-  emailVerifiedAt DateTime? @map("email_verified_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  email           String?       @unique
+  phone           String?       @unique
+  passwordHash    String?       @map("password_hash")
+  role            Role          @default(CUSTOMER)
+  isActive        Boolean       @default(true) @map("is_active")
+  avatarUrl       String?       @map("avatar_url")
+  emailVerified   Boolean       @default(false) @map("email_verified")
+  phoneVerified   Boolean       @default(false) @map("phone_verified")
+  provider        AuthProvider?
+  providerId      String?       @unique @map("provider_id")
+  emailVerifiedAt DateTime?     @map("email_verified_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
   bookings        Booking[]
 
   @@index([isActive])

@@ -20,8 +20,6 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { Role, Schedule } from '@prisma/client';
 import { SeatMapResult } from './seat-map.service';
 
-
-
 interface PaginatedSchedules {
   data: Schedule[];
   meta: { total: number; page: number; limit: number; totalPages: number };

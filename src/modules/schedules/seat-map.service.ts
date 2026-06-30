@@ -4,8 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 
 export interface SeatInfo {
-  id: string;           
-  seatId: string;       
+  id: string;
+  seatId: string;
   rowLabel: string;
   seatNumber: number;
   type: string;
@@ -48,10 +48,7 @@ export class SeatMapService {
           },
         },
       },
-      orderBy: [
-        { seat: { rowLabel: 'asc' } },
-        { seat: { seatNumber: 'asc' } },
-      ],
+      orderBy: [{ seat: { rowLabel: 'asc' } }, { seat: { seatNumber: 'asc' } }],
     });
 
     const rows: Record<string, SeatInfo[]> = {};
@@ -67,8 +64,8 @@ export class SeatMapService {
       if (!rows[row]) rows[row] = [];
 
       rows[row].push({
-        id: ss.id,           
-        seatId: ss.seat.id,  
+        id: ss.id,
+        seatId: ss.seat.id,
         rowLabel: ss.seat.rowLabel,
         seatNumber: ss.seat.seatNumber,
         type: ss.seat.type,

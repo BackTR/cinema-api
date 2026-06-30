@@ -50,18 +50,13 @@ export class BookingController {
     );
   }
 
-
   @Get(':bookingCode/ticket')
   async downloadTicket(
     @Param('bookingCode') bookingCode: string,
     @CurrentUser() user: JwtPayload,
     @Res() res: Response,
   ): Promise<void> {
-    const booking = await this.bookingService.findOne(
-      bookingCode,
-      user.sub,
-      user.role,
-    );
+    const booking = await this.bookingService.findOne(bookingCode, user.sub, user.role);
 
     if (booking.status !== 'CONFIRMED') {
       res.status(400).json({
@@ -73,19 +68,12 @@ export class BookingController {
 
     const pdfBuffer = await this.ticketService.generateTicketPdf(bookingCode);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="eticket-${bookingCode}.pdf"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="eticket-${bookingCode}.pdf"`);
     res.end(pdfBuffer);
   }
 
-
   @Get(':bookingCode')
-  async findOne(
-    @Param('bookingCode') bookingCode: string,
-    @CurrentUser() user: JwtPayload,
-  ) {
+  async findOne(@Param('bookingCode') bookingCode: string, @CurrentUser() user: JwtPayload) {
     return this.bookingService.findOne(bookingCode, user.sub, user.role);
   }
 

@@ -12,7 +12,7 @@ import { MoviesModule } from './modules/movies/movies.module';
 import { SchedulesModule } from './modules/schedules/schedules.module'; // ← fix path
 import { BookingModule } from './modules/booking/booking.module';
 import { PaymentModule } from './modules/payment/payment.module';
-import { TicketModule } from './modules/ticket/ticket.module';           // ← fix path
+import { TicketModule } from './modules/ticket/ticket.module'; // ← fix path
 import { NotificationModule } from './modules/notification/notification.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './modules/health/health.module';

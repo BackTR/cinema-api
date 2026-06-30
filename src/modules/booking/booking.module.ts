@@ -7,11 +7,7 @@ import { TicketModule } from '../ticket/ticket.module';
 import { SchedulesModule } from '../schedules/schedules.module';
 
 @Module({
-  imports: [
-    BullModule.registerQueue({ name: 'booking' }),
-    TicketModule,
-    SchedulesModule,
-  ],
+  imports: [BullModule.registerQueue({ name: 'booking' }), TicketModule, SchedulesModule],
   controllers: [BookingController],
   providers: [BookingService, SeatLockService],
   exports: [BookingService, SeatLockService],

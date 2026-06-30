@@ -9,114 +9,114 @@ import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 
 const mockPrisma = {
-    user: {
+  user: {
     findUnique: jest.fn(),
     create: jest.fn(),
-    },
+  },
 };
 
 const mockRedis = {
-    client: {
+  client: {
     setex: jest.fn(),
     get: jest.fn(),
     del: jest.fn(),
-    },
+  },
 };
 
 const mockJwt = {
-    signAsync: jest.fn().mockResolvedValue('mock-token'),
+  signAsync: jest.fn().mockResolvedValue('mock-token'),
 };
 
-    const mockConfig = {
-        getOrThrow: jest.fn().mockReturnValue('mock-secret'),
-        get: jest.fn().mockReturnValue('15m'),
-        };
+const mockConfig = {
+  getOrThrow: jest.fn().mockReturnValue('mock-secret'),
+  get: jest.fn().mockReturnValue('15m'),
+};
 
-    describe('AuthService', () => {
-        let service: AuthService;
+describe('AuthService', () => {
+  let service: AuthService;
 
-    beforeEach(async () => {
-        const module: TestingModule = await Test.createTestingModule({
-        providers: [
-            AuthService,
-            { provide: PrismaService, useValue: mockPrisma },
-            { provide: JwtService, useValue: mockJwt },
-            { provide: ConfigService, useValue: mockConfig },
-            { provide: RedisService, useValue: mockRedis },
-        ],
-        }).compile();
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: JwtService, useValue: mockJwt },
+        { provide: ConfigService, useValue: mockConfig },
+        { provide: RedisService, useValue: mockRedis },
+      ],
+    }).compile();
 
-        service = module.get<AuthService>(AuthService);
+    service = module.get<AuthService>(AuthService);
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  describe('register', () => {
+    it('should throw ConflictException if email exists', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'existing' });
+
+      await expect(
+        service.register({
+          name: 'Test',
+          email: 'test@example.com',
+          password: 'Password123',
+        }),
+      ).rejects.toThrow(ConflictException);
     });
 
-    afterEach(() => jest.clearAllMocks());
+    it('should create user and return tokens', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.create.mockResolvedValue({
+        id: 'user-1',
+        name: 'Test',
+        email: 'test@example.com',
+        role: 'CUSTOMER',
+      });
+      mockRedis.client.setex.mockResolvedValue('OK');
 
-    describe('register', () => {
-        it('should throw ConflictException if email exists', async () => {
-        mockPrisma.user.findUnique.mockResolvedValue({ id: 'existing' });
+      const result = await service.register({
+        name: 'Test',
+        email: 'test@example.com',
+        password: 'Password123',
+      });
 
-        await expect(
-            service.register({
-            name: 'Test',
-            email: 'test@example.com',
-            password: 'Password123',
-            }),
-        ).rejects.toThrow(ConflictException);
-        });
+      expect(result.user.email).toBe('test@example.com');
+      expect(result.accessToken).toBe('mock-token');
+      expect(result.refreshToken).toBe('mock-token');
+    });
+  });
 
-        it('should create user and return tokens', async () => {
-        mockPrisma.user.findUnique.mockResolvedValue(null);
-        mockPrisma.user.create.mockResolvedValue({
-            id: 'user-1',
-            name: 'Test',
-            email: 'test@example.com',
-            role: 'CUSTOMER',
-        });
-        mockRedis.client.setex.mockResolvedValue('OK');
+  describe('login', () => {
+    it('should throw UnauthorizedException for wrong password', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'test@example.com',
+        passwordHash: await bcrypt.hash('correct-password', 10),
+        role: 'CUSTOMER',
+      });
 
-        const result = await service.register({
-            name: 'Test',
-            email: 'test@example.com',
-            password: 'Password123',
-        });
-
-        expect(result.user.email).toBe('test@example.com');
-        expect(result.accessToken).toBe('mock-token');
-        expect(result.refreshToken).toBe('mock-token');
-        });
+      await expect(
+        service.login({ email: 'test@example.com', password: 'wrong-password' }),
+      ).rejects.toThrow(UnauthorizedException);
     });
 
-    describe('login', () => {
-        it('should throw UnauthorizedException for wrong password', async () => {
-        mockPrisma.user.findUnique.mockResolvedValue({
-            id: 'user-1',
-            email: 'test@example.com',
-            passwordHash: await bcrypt.hash('correct-password', 10),
-            role: 'CUSTOMER',
-        });
+    it('should return tokens on successful login', async () => {
+      const hash = await bcrypt.hash('Password123', 10);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        name: 'Test',
+        email: 'test@example.com',
+        passwordHash: hash,
+        role: 'CUSTOMER',
+      });
+      mockRedis.client.setex.mockResolvedValue('OK');
 
-        await expect(
-            service.login({ email: 'test@example.com', password: 'wrong-password' }),
-        ).rejects.toThrow(UnauthorizedException);
+      const result = await service.login({
+        email: 'test@example.com',
+        password: 'Password123',
+      });
+
+      expect(result.accessToken).toBe('mock-token');
     });
-
-        it('should return tokens on successful login', async () => {
-        const hash = await bcrypt.hash('Password123', 10);
-        mockPrisma.user.findUnique.mockResolvedValue({
-            id: 'user-1',
-            name: 'Test',
-            email: 'test@example.com',
-            passwordHash: hash,
-            role: 'CUSTOMER',
-        });
-        mockRedis.client.setex.mockResolvedValue('OK');
-
-        const result = await service.login({
-            email: 'test@example.com',
-            password: 'Password123',
-        });
-
-        expect(result.accessToken).toBe('mock-token');
-        });
-    });
+  });
 });
