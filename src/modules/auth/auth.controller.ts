@@ -8,6 +8,7 @@ import {
   UseGuards,
   Req,
   Res,
+  Query,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './guards/jwt.guard';
@@ -26,6 +27,7 @@ import {
 } from './dto/resend-email-verification.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { CheckPhoneSchema } from './dto/check-phone.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -81,6 +83,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async verifyPhoneOtp(@Body(new ZodValidationPipe(VerifyPhoneOtpSchema)) dto: VerifyPhoneOtpDto) {
     return this.authService.verifyPhoneOtp(dto);
+  }
+
+  @Get('phone/check')
+  async checkPhone(@Query(new ZodValidationPipe(CheckPhoneSchema)) query: { phone: string }) {
+    return this.authService.checkPhoneExists(query.phone);
   }
 
   // ─── OAuth Google ─────────────────────────────────────────────────

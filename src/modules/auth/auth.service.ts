@@ -230,6 +230,14 @@ export class AuthService {
     return this.buildAuthResponse(user);
   }
 
+  async checkPhoneExists(phone: string): Promise<{ exists: boolean }> {
+  const user = await this.prisma.user.findUnique({
+    where: { phone },
+    select: { id: true },
+  });
+  return { exists: !!user };
+}
+
   // ─── OAuth (Google / Facebook) ───────────────────────────────────
 
   async handleOAuthLogin(
