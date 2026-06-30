@@ -137,6 +137,7 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
   async logout(@CurrentUser() user: JwtPayload) {
     await this.authService.logout(user.sub);
     return { message: 'Logout berhasil' };
