@@ -1,7 +1,16 @@
 import {
-  Controller, Get, Post, Patch, Delete,
-  Param, Body, Query, HttpCode, HttpStatus,
-  UseGuards, UsePipes,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+  UsePipes,
 } from '@nestjs/common';
 import { MoviesService } from './movies.service';
 import { CreateMovieSchema, CreateMovieDto } from './dto/create-movie.dto';

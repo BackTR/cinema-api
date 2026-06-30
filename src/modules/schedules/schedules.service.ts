@@ -20,56 +20,61 @@ export class SchedulesService {
   ) {}
 
   async findAll(query: QueryScheduleDto): Promise<PaginatedResult<Schedule>> {
-  const { movieId, cinemaId, date, page, limit } = query;
-  const skip = (page - 1) * limit;
+    const { movieId, cinemaId, date, page, limit } = query;
+    const skip = (page - 1) * limit;
 
-  // ← Fix poin 3 & 19: pisahkan filter date dan filter future
-  let showTimeFilter: Prisma.ScheduleWhereInput['showTime'];
+    // ← Fix poin 3 & 19: pisahkan filter date dan filter future
+    let showTimeFilter: Prisma.ScheduleWhereInput['showTime'];
 
-  if (date) {
-    // Filter by date dengan timezone WIB (UTC+7)
-    const startOfDay = new Date(`${date}T00:00:00+07:00`);
-    const endOfDay = new Date(`${date}T23:59:59+07:00`);
-    showTimeFilter = { gte: startOfDay, lte: endOfDay };
-  } else {
-    // Default: tampilkan jadwal yang belum lewat
-    showTimeFilter = { gte: new Date() };
-  }
+    if (date) {
+      // Filter by date dengan timezone WIB (UTC+7)
+      const startOfDay = new Date(`${date}T00:00:00+07:00`);
+      const endOfDay = new Date(`${date}T23:59:59+07:00`);
+      showTimeFilter = { gte: startOfDay, lte: endOfDay };
+    } else {
+      // Default: tampilkan jadwal yang belum lewat
+      showTimeFilter = { gte: new Date() };
+    }
 
-  const where: Prisma.ScheduleWhereInput = {
-    isActive: true,
-    showTime: showTimeFilter,
-    ...(movieId && { movieId }),
-    ...(cinemaId && { studio: { cinemaId } }),
-  };
+    const where: Prisma.ScheduleWhereInput = {
+      isActive: true,
+      showTime: showTimeFilter,
+      ...(movieId && { movieId }),
+      ...(cinemaId && { studio: { cinemaId } }),
+    };
 
-  const [schedules, total] = await Promise.all([
-    this.prisma.schedule.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: { showTime: 'asc' },
-      include: {
-        movie: {
-          select: {
-            id: true, title: true, durationMinutes: true,
-            rating: true, posterUrl: true,
+    const [schedules, total] = await Promise.all([
+      this.prisma.schedule.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { showTime: 'asc' },
+        include: {
+          movie: {
+            select: {
+              id: true,
+              title: true,
+              durationMinutes: true,
+              rating: true,
+              posterUrl: true,
+            },
+          },
+          studio: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              cinema: { select: { id: true, name: true, city: true } },
+            },
           },
         },
-        studio: {
-          select: {
-            id: true, name: true, type: true,
-            cinema: { select: { id: true, name: true, city: true } },
-          },
-        },
-      },
-    }),
-    this.prisma.schedule.count({ where }),
-  ]);
+      }),
+      this.prisma.schedule.count({ where }),
+    ]);
 
-  return {
-    data: schedules,
-    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    return {
+      data: schedules,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 
@@ -98,9 +103,7 @@ export class SchedulesService {
     if (!studio) throw new NotFoundException('Studio tidak ditemukan');
 
     const showTime = new Date(dto.showTime);
-    const endTime = new Date(
-      showTime.getTime() + movie.durationMinutes * 60 * 1000,
-    );
+    const endTime = new Date(showTime.getTime() + movie.durationMinutes * 60 * 1000);
 
     // Fix: proper interval overlap detection
     // Overlap terjadi jika: startA < endB AND endA > startB
@@ -109,8 +112,8 @@ export class SchedulesService {
         studioId: dto.studioId,
         isActive: true,
         AND: [
-          { showTime: { lt: endTime } },   // jadwal lama mulai sebelum jadwal baru selesai
-          { endTime: { gt: showTime } },   // jadwal lama selesai setelah jadwal baru mulai
+          { showTime: { lt: endTime } }, // jadwal lama mulai sebelum jadwal baru selesai
+          { endTime: { gt: showTime } }, // jadwal lama selesai setelah jadwal baru mulai
         ],
       },
     });
@@ -140,9 +143,7 @@ export class SchedulesService {
         })),
       });
 
-      this.logger.log(
-        `Schedule created: ${newSchedule.id} with ${studio.seats.length} seats`,
-      );
+      this.logger.log(`Schedule created: ${newSchedule.id} with ${studio.seats.length} seats`);
       return newSchedule;
     });
 
@@ -162,26 +163,26 @@ export class SchedulesService {
     });
   }
 
-    async getCinemas() {
-      return this.prisma.cinema.findMany({
-        where: { isActive: true },
-        select: {
-          id: true,
-          name: true,
-          address: true,
-          city: true,
-          latitude: true,
-          longitude: true,
-          studios: {
-            where: { isActive: true },
-            select: { id: true, name: true, type: true },
-          },
+  async getCinemas() {
+    return this.prisma.cinema.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        city: true,
+        latitude: true,
+        longitude: true,
+        studios: {
+          where: { isActive: true },
+          select: { id: true, name: true, type: true },
         },
-        orderBy: { city: 'asc' },
-      });
-    }
+      },
+      orderBy: { city: 'asc' },
+    });
+  }
 
-    async getPricingRules(scheduleId: string) {
+  async getPricingRules(scheduleId: string) {
     const schedule = await this.prisma.schedule.findUnique({
       where: { id: scheduleId },
       include: {
@@ -200,28 +201,28 @@ export class SchedulesService {
     };
   }
 
-    async createPricingRule(
-      scheduleId: string,
-      dto: { seatType: 'REGULAR' | 'VIP'; pricingType: string; price: number },
-    ) {
-      await this.findOne(scheduleId);
+  async createPricingRule(
+    scheduleId: string,
+    dto: { seatType: 'REGULAR' | 'VIP'; pricingType: string; price: number },
+  ) {
+    await this.findOne(scheduleId);
 
-      return this.prisma.pricingRule.upsert({
-        where: {
-          scheduleId_seatType_pricingType: {
-            scheduleId,
-            seatType: dto.seatType,
-            pricingType: dto.pricingType as 'BASE',
-          },
-        },
-        update: { price: new Prisma.Decimal(dto.price) },
-        create: {
+    return this.prisma.pricingRule.upsert({
+      where: {
+        scheduleId_seatType_pricingType: {
           scheduleId,
           seatType: dto.seatType,
           pricingType: dto.pricingType as 'BASE',
-          price: new Prisma.Decimal(dto.price),
-          isActive: true,
         },
-      });
-    }
+      },
+      update: { price: new Prisma.Decimal(dto.price) },
+      create: {
+        scheduleId,
+        seatType: dto.seatType,
+        pricingType: dto.pricingType as 'BASE',
+        price: new Prisma.Decimal(dto.price),
+        isActive: true,
+      },
+    });
+  }
 }

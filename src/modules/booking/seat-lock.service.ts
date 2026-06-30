@@ -35,13 +35,13 @@ export class SeatLockService {
   async lockSeats(scheduleSeatIds: string[], userId: string): Promise<boolean> {
     const keys = scheduleSeatIds.map((id) => `seat_lock:${id}`);
 
-    const result = await this.redis.client.eval(
+    const result = (await this.redis.client.eval(
       LOCK_SCRIPT,
       keys.length,
       ...keys,
       String(LOCK_TTL_SECONDS),
       userId,
-    ) as number;
+    )) as number;
 
     if (result === 1) {
       this.logger.debug(`Seats locked for user ${userId}: ${scheduleSeatIds.join(', ')}`);
@@ -54,12 +54,7 @@ export class SeatLockService {
   async releaseSeats(scheduleSeatIds: string[], userId: string): Promise<void> {
     const keys = scheduleSeatIds.map((id) => `seat_lock:${id}`);
 
-    await this.redis.client.eval(
-      RELEASE_SCRIPT,
-      keys.length,
-      ...keys,
-      userId,
-    );
+    await this.redis.client.eval(RELEASE_SCRIPT, keys.length, ...keys, userId);
 
     this.logger.debug(`Seats released for user ${userId}: ${scheduleSeatIds.join(', ')}`);
   }

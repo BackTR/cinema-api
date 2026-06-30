@@ -1,6 +1,15 @@
 import {
-  Controller, Get, Post, Patch, Delete,
-  Param, Body, Query, HttpCode, HttpStatus, UseGuards,
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Param,
+  Body,
+  Query,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { CreateCinemaSchema, CreateCinemaDto } from './dto/create-cinema.dto';
@@ -32,9 +41,7 @@ export class AdminController {
 
   @Post('cinemas')
   @HttpCode(HttpStatus.CREATED)
-  async createCinema(
-    @Body(new ZodValidationPipe(CreateCinemaSchema)) dto: CreateCinemaDto,
-  ) {
+  async createCinema(@Body(new ZodValidationPipe(CreateCinemaSchema)) dto: CreateCinemaDto) {
     return this.adminService.createCinema(dto);
   }
 
@@ -60,9 +67,7 @@ export class AdminController {
 
   @Post('studios')
   @HttpCode(HttpStatus.CREATED)
-  async createStudio(
-    @Body(new ZodValidationPipe(CreateStudioSchema)) dto: CreateStudioDto,
-  ) {
+  async createStudio(@Body(new ZodValidationPipe(CreateStudioSchema)) dto: CreateStudioDto) {
     return this.adminService.createStudio(dto);
   }
 
@@ -74,17 +79,13 @@ export class AdminController {
 
   @Post('seats')
   @HttpCode(HttpStatus.CREATED)
-  async createSeats(
-    @Body(new ZodValidationPipe(CreateSeatsSchema)) dto: CreateSeatsDto,
-  ) {
+  async createSeats(@Body(new ZodValidationPipe(CreateSeatsSchema)) dto: CreateSeatsDto) {
     return this.adminService.createSeats(dto);
   }
 
   // ─── Bookings ────────────────────────────────────────────────────
   @Get('bookings')
-  async getAllBookings(
-    @Query(new ZodValidationPipe(QueryBookingSchema)) query: QueryBookingDto,
-  ) {
+  async getAllBookings(@Query(new ZodValidationPipe(QueryBookingSchema)) query: QueryBookingDto) {
     return this.adminService.getAllBookings(query);
   }
 

@@ -11,15 +11,12 @@ export const CreateMovieSchema = z.object({
   director: z.string().optional(),
   cast: z.string().optional(),
   language: z.enum(['INDONESIA', 'ENGLISH', 'SUBTITLED']).optional(),
-  format: z.enum(['TWO_D', 'THREE_D', 'IMAX', 'FOUR_DX']).optional(), 
-  releaseDate: z.string().regex(
-    /^\d{4}-\d{2}-\d{2}$/,
-    'Format tanggal harus YYYY-MM-DD',
-  ),
-  endDate: z.string().regex(
-    /^\d{4}-\d{2}-\d{2}$/,
-    'Format tanggal harus YYYY-MM-DD',
-  ).optional(),
+  format: z.enum(['TWO_D', 'THREE_D', 'IMAX', 'FOUR_DX']).optional(),
+  releaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal harus YYYY-MM-DD'),
+  endDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal harus YYYY-MM-DD')
+    .optional(),
 });
 
 export type CreateMovieDto = z.infer<typeof CreateMovieSchema>;

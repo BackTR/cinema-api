@@ -91,9 +91,7 @@ export class BookingService {
           const specificRule = schedule.pricingRules.find(
             (r) => r.seatType === scheduleSeat.seat.type,
           );
-          const fallbackRule = schedule.pricingRules.find(
-            (r) => r.seatType === null,
-          );
+          const fallbackRule = schedule.pricingRules.find((r) => r.seatType === null);
           const price = specificRule?.price ?? fallbackRule?.price ?? schedule.basePrice;
 
           totalAmount = totalAmount.add(price);
@@ -148,7 +146,7 @@ export class BookingService {
 
       // Invalidate seat map cache
       await this.seatMapService.invalidateSeatMap(scheduleId);
-      
+
       // Dispatch expire job SETELAH transaction sukses — bookingId sudah ada
       await this.bookingQueue.add(
         'expire-booking',
@@ -231,111 +229,102 @@ export class BookingService {
 
     // Ownership check — user hanya boleh lihat booking sendiri
     // Admin boleh lihat semua
-    if (role !== "ADMIN" && booking.userId !== userId) {
+    if (role !== 'ADMIN' && booking.userId !== userId) {
       throw new ForbiddenException('Anda tidak memiliki akses ke booking ini');
     }
 
     return booking;
   }
 
-  async cancelBooking(
-  bookingCode: string,
-  userId: string,
-  dto: CancelBookingDto,
-) {
-  const booking = await this.prisma.booking.findUnique({
-    where: { bookingCode },
-    include: {
-      seats: { select: { scheduleSeat: { select: { id: true } } } },
-      schedule: { select: { showTime: true, id: true } },
-      payment: { select: { status: true } },
-    },
-  });
-
-  if (!booking) throw new NotFoundException('Booking tidak ditemukan');
-  if (booking.userId !== userId) throw new ForbiddenException('Akses ditolak');
-
-  if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
-    throw new BadRequestException(
-      `Booking dengan status ${booking.status} tidak bisa dibatalkan`,
-    );
-  }
-
-  // Fix poin 4: tolak cancel CONFIRMED jika sudah PAID tanpa refund
-  if (
-    booking.status === 'CONFIRMED' &&
-    booking.payment?.status === 'PAID'
-  ) {
-    throw new BadRequestException(
-      'Booking yang sudah dibayar tidak bisa dibatalkan langsung. ' +
-      'Hubungi customer service untuk proses refund.',
-    );
-  }
-
-  const oneHourBeforeShow = new Date(
-    booking.schedule.showTime.getTime() - 60 * 60 * 1000,
-  );
-  if (new Date() > oneHourBeforeShow) {
-    throw new BadRequestException(
-      'Tidak bisa membatalkan booking kurang dari 1 jam sebelum tayang',
-    );
-  }
-
-  const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
-
-  await this.prisma.$transaction(async (tx) => {
-    await tx.booking.update({
+  async cancelBooking(bookingCode: string, userId: string, dto: CancelBookingDto) {
+    const booking = await this.prisma.booking.findUnique({
       where: { bookingCode },
-      data: {
-        status: BookingStatus.CANCELLED,
-        cancelledAt: new Date(),
-        cancellationReason: dto.reason ?? 'Dibatalkan oleh pengguna',
+      include: {
+        seats: { select: { scheduleSeat: { select: { id: true } } } },
+        schedule: { select: { showTime: true, id: true } },
+        payment: { select: { status: true } },
       },
     });
 
-    await tx.scheduleSeat.updateMany({
-      where: { id: { in: scheduleSeatIds } },
-      data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+    if (!booking) throw new NotFoundException('Booking tidak ditemukan');
+    if (booking.userId !== userId) throw new ForbiddenException('Akses ditolak');
+
+    if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
+      throw new BadRequestException(
+        `Booking dengan status ${booking.status} tidak bisa dibatalkan`,
+      );
+    }
+
+    // Fix poin 4: tolak cancel CONFIRMED jika sudah PAID tanpa refund
+    if (booking.status === 'CONFIRMED' && booking.payment?.status === 'PAID') {
+      throw new BadRequestException(
+        'Booking yang sudah dibayar tidak bisa dibatalkan langsung. ' +
+          'Hubungi customer service untuk proses refund.',
+      );
+    }
+
+    const oneHourBeforeShow = new Date(booking.schedule.showTime.getTime() - 60 * 60 * 1000);
+    if (new Date() > oneHourBeforeShow) {
+      throw new BadRequestException(
+        'Tidak bisa membatalkan booking kurang dari 1 jam sebelum tayang',
+      );
+    }
+
+    const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { bookingCode },
+        data: {
+          status: BookingStatus.CANCELLED,
+          cancelledAt: new Date(),
+          cancellationReason: dto.reason ?? 'Dibatalkan oleh pengguna',
+        },
+      });
+
+      await tx.scheduleSeat.updateMany({
+        where: { id: { in: scheduleSeatIds } },
+        data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+      });
     });
-  });
 
-  await this.seatLock.releaseSeats(scheduleSeatIds, userId);
-  await this.seatMapService.invalidateSeatMap(booking.schedule.id);
+    await this.seatLock.releaseSeats(scheduleSeatIds, userId);
+    await this.seatMapService.invalidateSeatMap(booking.schedule.id);
 
-  this.logger.log(`Booking cancelled: ${bookingCode} by user ${userId}`);
-  return { message: 'Booking berhasil dibatalkan' };
-}
+    this.logger.log(`Booking cancelled: ${bookingCode} by user ${userId}`);
+    return { message: 'Booking berhasil dibatalkan' };
+  }
 
   // Dipanggil oleh BullMQ processor saat booking expired
   async expireBooking(bookingId: string, scheduleSeatIds: string[]): Promise<void> {
-  const booking = await this.prisma.booking.findUnique({
-    where: { id: bookingId },
-  });
-
-  // Guard — hanya expire jika masih PENDING
-  if (!booking || booking.status !== BookingStatus.PENDING) {
-    this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
-    return;
-  }
-
-  await this.prisma.$transaction(async (tx) => {
-    await tx.booking.update({
+    const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
-      data: {
-        status: BookingStatus.EXPIRED,
-        expiredAt: new Date(),
-      },
     });
 
-    await tx.scheduleSeat.updateMany({
-      where: { id: { in: scheduleSeatIds } },
-      data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+    // Guard — hanya expire jika masih PENDING
+    if (!booking || booking.status !== BookingStatus.PENDING) {
+      this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.EXPIRED,
+          expiredAt: new Date(),
+        },
+      });
+
+      await tx.scheduleSeat.updateMany({
+        where: { id: { in: scheduleSeatIds } },
+        data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+      });
     });
-  });
 
-  // ← Fix poin 1: release Redis lock setelah expire
-  await this.seatLock.releaseSeats(scheduleSeatIds, booking.userId);
+    // ← Fix poin 1: release Redis lock setelah expire
+    await this.seatLock.releaseSeats(scheduleSeatIds, booking.userId);
 
-  this.logger.log(`Booking expired: ${bookingId} — seats released`);
+    this.logger.log(`Booking expired: ${bookingId} — seats released`);
   }
 }
