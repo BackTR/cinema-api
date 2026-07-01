@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
-import { createHash, randomInt } from 'crypto';
+import { createHash, randomBytes, randomInt } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { WhatsappService } from './whatsapp.service';
@@ -19,6 +19,8 @@ import { RequestPhoneOtpDto } from './dto/request-phone-otp.dto';
 import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { User, AuthProvider } from '@prisma/client';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 export interface TokenPair {
   accessToken: string;
@@ -44,6 +46,8 @@ const OTP_TTL_SECONDS = 300;
 const OTP_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 const EMAIL_VERIFY_TTL_SECONDS = 24 * 60 * 60;
+const RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1 jam
+const RESET_COOLDOWN_SECONDS = 60;
 
 @Injectable()
 export class AuthService {
@@ -362,5 +366,60 @@ export class AuthService {
     emailVerified: user.emailVerified,
     phoneVerified: user.phoneVerified,
   };
+}
+
+async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
+  const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+  // Selalu return sukses meski email tidak ditemukan — mencegah email enumeration
+  if (!user || !user.passwordHash) {
+    this.logger.warn(`Forgot password requested for non-existent/non-password email: ${dto.email}`);
+    return { message: 'Jika email terdaftar, link reset password telah dikirim' };
+  }
+
+  const cooldownKey = `reset_password:${user.id}:cooldown`;
+  const onCooldown = await this.redis.client.get(cooldownKey);
+  if (onCooldown) {
+    throw new BadRequestException('Tunggu sebentar sebelum minta link reset baru');
+  }
+
+  const token = randomBytes(32).toString('hex');
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+
+  await this.redis.client.setex(`reset_password:${tokenHash}`, RESET_TOKEN_TTL_SECONDS, user.id);
+  await this.redis.client.setex(cooldownKey, RESET_COOLDOWN_SECONDS, '1');
+
+  const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:3001');
+  const resetUrl = `${frontendUrl}/auth/reset-password?token=${token}`;
+
+  await this.notification.sendPasswordResetLink(user.email!, user.name, resetUrl);
+
+  this.logger.log(`Password reset link generated for: ${dto.email}`);
+  return { message: 'Jika email terdaftar, link reset password telah dikirim' };
+}
+
+async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+  const tokenHash = createHash('sha256').update(dto.token).digest('hex');
+  const userId = await this.redis.client.get(`reset_password:${tokenHash}`);
+
+  if (!userId) {
+    throw new BadRequestException('Link reset password tidak valid atau sudah expired');
+  }
+
+  const passwordHash = await bcrypt.hash(dto.password, 12);
+
+  await this.prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash },
+  });
+
+  // Invalidate token setelah dipakai
+  await this.redis.client.del(`reset_password:${tokenHash}`);
+
+  // Invalidate semua refresh token user ini — paksa logout semua device
+  await this.redis.client.del(`refresh_token:${userId}`);
+
+  this.logger.log(`Password reset successful for user: ${userId}`);
+  return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
 }
 }
