@@ -47,6 +47,16 @@ export class SchedulesController {
     return this.schedulesService.getSeatMap(id);
   }
 
+  @Get(':id/pricing')
+  async getPricingRules(@Param('id') id: string) {
+    return this.schedulesService.getPricingRules(id);
+  }
+
+  @Get('cinemas')
+  async getCinemas() {
+    return this.schedulesService.getCinemas();
+  }
+
   // Admin only
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -64,5 +74,16 @@ export class SchedulesController {
   @Roles(Role.ADMIN)
   async deactivate(@Param('id') id: string): Promise<void> {
     await this.schedulesService.deactivate(id);
+  }
+
+  @Post(':id/pricing')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  async createPricingRule(
+    @Param('id') id: string,
+    @Body() dto: { seatType: 'REGULAR' | 'VIP'; pricingType: string; price: number },
+  ) {
+    return this.schedulesService.createPricingRule(id, dto);
   }
 }

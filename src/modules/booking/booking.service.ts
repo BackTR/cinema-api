@@ -10,11 +10,15 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SeatLockService } from './seat-lock.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { BookingStatus, Prisma } from '@prisma/client';
+import { BookingStatus, Prisma, Role } from '@prisma/client';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { nanoid } from 'nanoid';
+<<<<<<< HEAD
 import { SeatMapService } from '@modules/schedules/seat-map.service';
+=======
+import { SeatMapService } from '../schedules/seat-map.service';
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
 const BOOKING_EXPIRY_MINUTES = 10;
 
@@ -87,10 +91,13 @@ export class BookingService {
         let totalAmount = new Prisma.Decimal(0);
 
         const bookingSeatData = seats.map((scheduleSeat) => {
-          const rule = schedule.pricingRules.find(
-            (r) => r.seatType === scheduleSeat.seat.type || r.seatType === null,
+          // Fix: prioritaskan rule spesifik (seatType match) sebelum fallback (null)
+          const specificRule = schedule.pricingRules.find(
+            (r) => r.seatType === scheduleSeat.seat.type,
           );
-          const price = rule ? rule.price : schedule.basePrice;
+          const fallbackRule = schedule.pricingRules.find((r) => r.seatType === null);
+          const price = specificRule?.price ?? fallbackRule?.price ?? schedule.basePrice;
+
           totalAmount = totalAmount.add(price);
 
           return {
@@ -143,7 +150,11 @@ export class BookingService {
 
       // Invalidate seat map cache
       await this.seatMapService.invalidateSeatMap(scheduleId);
+<<<<<<< HEAD
       
+=======
+
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
       // Dispatch expire job SETELAH transaction sukses — bookingId sudah ada
       await this.bookingQueue.add(
         'expire-booking',
@@ -201,7 +212,7 @@ export class BookingService {
     };
   }
 
-  async findOne(bookingCode: string, userId: string) {
+  async findOne(bookingCode: string, userId: string, role?: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { bookingCode },
       include: {
@@ -226,7 +237,7 @@ export class BookingService {
 
     // Ownership check — user hanya boleh lihat booking sendiri
     // Admin boleh lihat semua
-    if (booking.userId !== userId) {
+    if (role !== 'ADMIN' && booking.userId !== userId) {
       throw new ForbiddenException('Anda tidak memiliki akses ke booking ini');
     }
 
@@ -238,21 +249,28 @@ export class BookingService {
       where: { bookingCode },
       include: {
         seats: { select: { scheduleSeat: { select: { id: true } } } },
-        schedule: { select: { showTime: true } },
+        schedule: { select: { showTime: true, id: true } },
+        payment: { select: { status: true } },
       },
     });
 
     if (!booking) throw new NotFoundException('Booking tidak ditemukan');
     if (booking.userId !== userId) throw new ForbiddenException('Akses ditolak');
 
-    // Hanya PENDING dan CONFIRMED yang bisa dicancel
     if (!['PENDING', 'CONFIRMED'].includes(booking.status)) {
       throw new BadRequestException(
         `Booking dengan status ${booking.status} tidak bisa dibatalkan`,
       );
     }
 
-    // Tidak bisa cancel kurang dari 1 jam sebelum tayang
+    // Fix poin 4: tolak cancel CONFIRMED jika sudah PAID tanpa refund
+    if (booking.status === 'CONFIRMED' && booking.payment?.status === 'PAID') {
+      throw new BadRequestException(
+        'Booking yang sudah dibayar tidak bisa dibatalkan langsung. ' +
+          'Hubungi customer service untuk proses refund.',
+      );
+    }
+
     const oneHourBeforeShow = new Date(booking.schedule.showTime.getTime() - 60 * 60 * 1000);
     if (new Date() > oneHourBeforeShow) {
       throw new BadRequestException(
@@ -263,7 +281,6 @@ export class BookingService {
     const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
 
     await this.prisma.$transaction(async (tx) => {
-      // Update booking status
       await tx.booking.update({
         where: { bookingCode },
         data: {
@@ -273,7 +290,6 @@ export class BookingService {
         },
       });
 
-      // Bebaskan kursi kembali → AVAILABLE
       await tx.scheduleSeat.updateMany({
         where: { id: { in: scheduleSeatIds } },
         data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
@@ -282,11 +298,10 @@ export class BookingService {
     
     await this.seatMapService.invalidateSeatMap(booking.scheduleId);
 
-    // Release Redis lock
     await this.seatLock.releaseSeats(scheduleSeatIds, userId);
+    await this.seatMapService.invalidateSeatMap(booking.schedule.id);
 
     this.logger.log(`Booking cancelled: ${bookingCode} by user ${userId}`);
-
     return { message: 'Booking berhasil dibatalkan' };
   }
 
@@ -296,10 +311,38 @@ export class BookingService {
     where: { id: bookingId },
   });
 
+<<<<<<< HEAD
   // Guard — hanya expire jika masih PENDING
   if (!booking || booking.status !== BookingStatus.PENDING) {
     this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
     return;
+=======
+    // Guard — hanya expire jika masih PENDING
+    if (!booking || booking.status !== BookingStatus.PENDING) {
+      this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: BookingStatus.EXPIRED,
+          expiredAt: new Date(),
+        },
+      });
+
+      await tx.scheduleSeat.updateMany({
+        where: { id: { in: scheduleSeatIds } },
+        data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
+      });
+    });
+
+    // ← Fix poin 1: release Redis lock setelah expire
+    await this.seatLock.releaseSeats(scheduleSeatIds, booking.userId);
+
+    this.logger.log(`Booking expired: ${bookingId} — seats released`);
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
   }
 
   await this.prisma.$transaction(async (tx) => {

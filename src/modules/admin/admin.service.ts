@@ -85,9 +85,7 @@ export class AdminService {
         confirmedBookings,
         todayBookings,
         conversionRate:
-          totalBookings > 0
-            ? ((confirmedBookings / totalBookings) * 100).toFixed(1) + '%'
-            : '0%',
+          totalBookings > 0 ? ((confirmedBookings / totalBookings) * 100).toFixed(1) + '%' : '0%',
       },
       revenue: {
         monthly: Number(monthlyRevenue._sum.amount ?? 0),

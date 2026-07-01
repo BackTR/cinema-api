@@ -50,6 +50,7 @@ export class BookingController {
     );
   }
 
+<<<<<<< HEAD
 
 @Get(':bookingCode/ticket')
 async downloadTicket(
@@ -75,12 +76,33 @@ async downloadTicket(
 }
 
  
-  @Get(':bookingCode')
-  async findOne(
+=======
+  @Get(':bookingCode/ticket')
+  async downloadTicket(
     @Param('bookingCode') bookingCode: string,
     @CurrentUser() user: JwtPayload,
-  ) {
-    return this.bookingService.findOne(bookingCode, user.sub);
+    @Res() res: Response,
+  ): Promise<void> {
+    const booking = await this.bookingService.findOne(bookingCode, user.sub, user.role);
+
+    if (booking.status !== 'CONFIRMED') {
+      res.status(400).json({
+        success: false,
+        message: `Tiket hanya tersedia untuk booking CONFIRMED. Status: ${booking.status}`,
+      });
+      return;
+    }
+
+    const pdfBuffer = await this.ticketService.generateTicketPdf(bookingCode);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="eticket-${bookingCode}.pdf"`);
+    res.end(pdfBuffer);
+  }
+
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
+  @Get(':bookingCode')
+  async findOne(@Param('bookingCode') bookingCode: string, @CurrentUser() user: JwtPayload) {
+    return this.bookingService.findOne(bookingCode, user.sub, user.role);
   }
 
   @Patch(':bookingCode/cancel')

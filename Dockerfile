@@ -9,7 +9,11 @@ RUN apt-get update && apt-get install -y openssl
 
 COPY package*.json ./
 
+<<<<<<< HEAD
 RUN npm install && npm cache clean --force
+=======
+RUN npm ci
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
 COPY . .
 
@@ -28,7 +32,11 @@ RUN apt-get update && apt-get install -y openssl
 
 COPY package*.json ./
 
+<<<<<<< HEAD
 RUN npm install && npm cache clean --force
+=======
+RUN npm ci --omit=dev
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma

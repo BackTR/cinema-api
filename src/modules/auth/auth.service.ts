@@ -1,148 +1,425 @@
-import { Injectable, ConflictException, UnauthorizedException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
+import { createHash, randomBytes, randomInt } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { WhatsappService } from './whatsapp.service';
+import { NotificationService } from '../notification/notification.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import * as bcrypt from 'bcrypt';
+import { RequestPhoneOtpDto } from './dto/request-phone-otp.dto';
+import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { User, AuthProvider } from '@prisma/client';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
 }
 
-export interface AuthResponse extends TokenPair {
+export interface AuthResponse {
   user: {
     id: string;
     name: string;
-    email: string;
+    email: string | null;
+    phone: string | null;
     role: string;
+    emailVerified: boolean;
+    phoneVerified: boolean;
   };
+  accessToken: string;
+  refreshToken: string;
 }
+
+const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
+const OTP_TTL_SECONDS = 300;
+const OTP_COOLDOWN_SECONDS = 60;
+const OTP_MAX_ATTEMPTS = 5;
+const EMAIL_VERIFY_TTL_SECONDS = 24 * 60 * 60;
+const RESET_TOKEN_TTL_SECONDS = 60 * 60; // 1 jam
+const RESET_COOLDOWN_SECONDS = 60;
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly BCRYPT_ROUNDS = 12;
-  private readonly REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60; // 7 hari dalam detik
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly redis: RedisService,
+    private readonly whatsapp: WhatsappService,
+    private readonly notification: NotificationService,
   ) {}
 
+  // ─── Email + Password ──────────────────────────────────────────
+
   async register(dto: RegisterDto): Promise<AuthResponse> {
-    // Cek email sudah terdaftar
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    if (existing) {
-      throw new ConflictException('Email sudah terdaftar');
-    }
+    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (existing) throw new ConflictException('Email sudah terdaftar');
 
-    // Hash password
-    const passwordHash = await bcrypt.hash(dto.password, this.BCRYPT_ROUNDS);
+    const passwordHash = await bcrypt.hash(dto.password, 12);
 
-    // Buat user baru
     const user = await this.prisma.user.create({
       data: {
         name: dto.name,
         email: dto.email,
         phone: dto.phone,
         passwordHash,
+        role: 'CUSTOMER',
+        emailVerified: false,
       },
     });
 
-    this.logger.log(`New user registered: ${user.email}`);
+    await this.sendEmailVerification(user.id, user.email!, user.name);
 
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
-
-    return {
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
-      ...tokens,
-    };
+    this.logger.log(`User registered via email: ${dto.email}`);
+    return this.buildAuthResponse(user);
   }
 
   async login(dto: LoginDto): Promise<AuthResponse> {
-    // Cari user by email
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException('Email atau password tidak valid');
+    }
+
+    const isMatch = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!isMatch) throw new UnauthorizedException('Email atau password tidak valid');
+
+    if (!user.isActive) throw new UnauthorizedException('Akun Anda telah dinonaktifkan');
+
+    if (!user.emailVerified) {
+      throw new UnauthorizedException(
+        'Email belum diverifikasi. Periksa inbox Anda atau minta kode verifikasi baru.',
+      );
+    }
+
+    return this.buildAuthResponse(user);
+  }
+
+  // ─── Email Verification ─────────────────────────────────────────
+
+  async sendEmailVerification(userId: string, email: string, name: string): Promise<void> {
+    const cooldownKey = `email_verify:${userId}:cooldown`;
+    const onCooldown = await this.redis.client.get(cooldownKey);
+    if (onCooldown) {
+      throw new BadRequestException('Tunggu sebentar sebelum minta kode verifikasi baru');
+    }
+
+    const code = this.generateOtp();
+    await this.redis.client.setex(`email_verify:${userId}`, EMAIL_VERIFY_TTL_SECONDS, code);
+    await this.redis.client.setex(cooldownKey, OTP_COOLDOWN_SECONDS, '1');
+
+    await this.notification.sendEmailVerificationCode(email, name, code);
+  }
+
+  async resendEmailVerification(email: string): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) throw new BadRequestException('Email tidak ditemukan');
+    if (user.emailVerified) throw new BadRequestException('Email sudah terverifikasi');
+
+    await this.sendEmailVerification(user.id, email, user.name);
+    return { message: 'Kode verifikasi baru telah dikirim ke email Anda' };
+  }
+
+  async verifyEmail(dto: VerifyEmailDto): Promise<AuthResponse> {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user) throw new BadRequestException('Email tidak ditemukan');
+
+    const storedCode = await this.redis.client.get(`email_verify:${user.id}`);
+    if (!storedCode || storedCode !== dto.code) {
+      throw new BadRequestException('Kode verifikasi salah atau sudah expired');
+    }
+
+    await this.redis.client.del(`email_verify:${user.id}`);
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerified: true, emailVerifiedAt: new Date() },
     });
 
-    // Pesan error sengaja dibuat sama untuk mencegah user enumeration
-    const invalidMsg = 'Email atau password tidak valid';
-    if (!user) throw new UnauthorizedException(invalidMsg);
+    this.logger.log(`Email verified: ${dto.email}`);
+    return this.buildAuthResponse(updated);
+  }
 
-    // Verifikasi password
-    const isMatch = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!isMatch) throw new UnauthorizedException(invalidMsg);
+  // ─── Phone + WhatsApp OTP ────────────────────────────────────────
 
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
+  async requestPhoneOtp(dto: RequestPhoneOtpDto): Promise<{ message: string; isNewUser: boolean }> {
+    const { phone, name } = dto;
+
+    const cooldownKey = `otp:${phone}:cooldown`;
+    const onCooldown = await this.redis.client.get(cooldownKey);
+    if (onCooldown) {
+      throw new BadRequestException('Tunggu sebentar sebelum minta OTP baru');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({ where: { phone } });
+
+    if (existingUser && !existingUser.isActive) {
+      throw new UnauthorizedException('Akun Anda telah dinonaktifkan');
+    }
+
+    if (!existingUser) {
+      if (!name) {
+        throw new BadRequestException('Nama wajib diisi untuk pendaftaran baru');
+      }
+      await this.redis.client.setex(`pending_register:${phone}`, OTP_TTL_SECONDS, name);
+    }
+
+    const otp = this.generateOtp();
+    await this.redis.client.setex(`otp:${phone}`, OTP_TTL_SECONDS, otp);
+    await this.redis.client.setex(cooldownKey, OTP_COOLDOWN_SECONDS, '1');
+    await this.redis.client.del(`otp:${phone}:attempts`);
+
+    await this.whatsapp.sendOtp(phone, otp);
 
     return {
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
-      ...tokens,
+      message: 'Kode OTP telah dikirim via WhatsApp',
+      isNewUser: !existingUser,
     };
   }
 
-  async refreshTokens(userId: string, refreshToken: string): Promise<TokenPair> {
-    // Verifikasi refresh token ada di Redis
-    const storedToken = await this.redis.client.get(`refresh_token:${userId}`);
-    if (!storedToken) {
-      throw new UnauthorizedException('Refresh token tidak valid atau sudah expired');
+  async verifyPhoneOtp(dto: VerifyPhoneOtpDto): Promise<AuthResponse> {
+    const { phone, otp } = dto;
+
+    const attemptsKey = `otp:${phone}:attempts`;
+    const attempts = Number(await this.redis.client.get(attemptsKey)) || 0;
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException('Terlalu banyak percobaan salah. Minta OTP baru.');
     }
 
-    // Bandingkan token (hash comparison)
-    const isMatch = await bcrypt.compare(refreshToken, storedToken);
-    if (!isMatch) {
+    const storedOtp = await this.redis.client.get(`otp:${phone}`);
+    if (!storedOtp || storedOtp !== otp) {
+      await this.redis.client.incr(attemptsKey);
+      await this.redis.client.expire(attemptsKey, OTP_TTL_SECONDS);
+      throw new BadRequestException('Kode OTP salah atau sudah expired');
+    }
+
+    await this.redis.client.del(`otp:${phone}`);
+    await this.redis.client.del(attemptsKey);
+
+    let user = await this.prisma.user.findUnique({ where: { phone } });
+
+    if (!user) {
+      const pendingName = await this.redis.client.get(`pending_register:${phone}`);
+      if (!pendingName) {
+        throw new BadRequestException('Sesi pendaftaran sudah expired, silakan mulai ulang');
+      }
+
+      user = await this.prisma.user.create({
+        data: { name: pendingName, phone, phoneVerified: true, role: 'CUSTOMER' },
+      });
+      await this.redis.client.del(`pending_register:${phone}`);
+      this.logger.log(`New user registered via phone: ${phone}`);
+    } else {
+      if (!user.isActive) throw new UnauthorizedException('Akun Anda telah dinonaktifkan');
+      if (!user.phoneVerified) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { phoneVerified: true },
+        });
+      }
+    }
+
+    return this.buildAuthResponse(user);
+  }
+
+  async checkPhoneExists(phone: string): Promise<{ exists: boolean }> {
+  const user = await this.prisma.user.findUnique({
+    where: { phone },
+    select: { id: true },
+  });
+  return { exists: !!user };
+}
+
+  // ─── OAuth (Google / Facebook) ───────────────────────────────────
+
+  async handleOAuthLogin(
+    provider: AuthProvider,
+    profile: { providerId: string; email: string; name: string; avatarUrl?: string },
+  ): Promise<AuthResponse> {
+    let user = await this.prisma.user.findUnique({
+      where: { providerId: profile.providerId },
+    });
+
+    if (!user) {
+      const existingByEmail = profile.email
+        ? await this.prisma.user.findUnique({ where: { email: profile.email } })
+        : null;
+
+      if (existingByEmail) {
+        // Link OAuth ke akun yang sudah ada berdasarkan email
+        user = await this.prisma.user.update({
+          where: { id: existingByEmail.id },
+          data: {
+            provider,
+            providerId: profile.providerId,
+            emailVerified: true,
+            avatarUrl: existingByEmail.avatarUrl ?? profile.avatarUrl,
+          },
+        });
+      } else {
+        user = await this.prisma.user.create({
+          data: {
+            name: profile.name,
+            email: profile.email || null,
+            avatarUrl: profile.avatarUrl,
+            provider,
+            providerId: profile.providerId,
+            emailVerified: true,
+            role: 'CUSTOMER',
+          },
+        });
+      }
+      this.logger.log(`New user via ${provider}: ${profile.email}`);
+    }
+
+    if (!user.isActive) throw new UnauthorizedException('Akun Anda telah dinonaktifkan');
+
+    return this.buildAuthResponse(user);
+  }
+
+  // ─── Token Management ────────────────────────────────────────────
+
+  async refreshToken(userId: string, refreshToken: string): Promise<TokenPair> {
+    const storedHash = await this.redis.client.get(`refresh_token:${userId}`);
+    if (!storedHash) throw new UnauthorizedException('Refresh token tidak valid');
+
+    const incomingHash = createHash('sha256').update(refreshToken).digest('hex');
+    if (storedHash !== incomingHash) {
       throw new UnauthorizedException('Refresh token tidak valid');
     }
 
-    // Ambil data user
-    const user = await this.prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-    });
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) throw new UnauthorizedException('User tidak valid');
 
-    // Rotate refresh token — token lama langsung invalid
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-    await this.saveRefreshToken(user.id, tokens.refreshToken);
-
-    return tokens;
+    return this.generateTokenPair(user);
   }
 
   async logout(userId: string): Promise<void> {
-    // Hapus refresh token dari Redis
     await this.redis.client.del(`refresh_token:${userId}`);
-    this.logger.log(`User logged out: ${userId}`);
   }
 
-  // ─── Private Helpers ────────────────────────────────────────────────────────
+  private async generateTokenPair(user: User): Promise<TokenPair> {
+    const payload = { sub: user.id, email: user.email, role: user.role };
 
-  private async generateTokens(userId: string, email: string, role: string): Promise<TokenPair> {
-    const payload = { sub: userId, email, role };
+    const accessExpiresIn = this.config.get<string>('JWT_ACCESS_EXPIRES_IN', '15m');
+    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
 
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwt.signAsync(payload, {
-        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get('JWT_ACCESS_EXPIRES_IN', '15m'),
-      }),
-      this.jwt.signAsync(payload, {
-        secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN', '7d'),
-      }),
-    ]);
+    const accessToken = await this.jwt.signAsync(payload, {
+      secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      expiresIn: accessExpiresIn as `${number}${'s' | 'm' | 'h' | 'd'}`,
+    });
+
+    const refreshToken = await this.jwt.signAsync(payload, {
+      secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
+      expiresIn: refreshExpiresIn as `${number}${'s' | 'm' | 'h' | 'd'}`,
+    });
+
+    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    await this.redis.client.setex(`refresh_token:${user.id}`, REFRESH_TTL_SECONDS, refreshHash);
 
     return { accessToken, refreshToken };
   }
 
-  private async saveRefreshToken(userId: string, refreshToken: string): Promise<void> {
-    // Simpan hashed refresh token di Redis — bukan plain token
-    const hashed = await bcrypt.hash(refreshToken, this.BCRYPT_ROUNDS);
-    await this.redis.client.setex(`refresh_token:${userId}`, this.REFRESH_TOKEN_TTL, hashed);
+  private async buildAuthResponse(user: User): Promise<AuthResponse> {
+    const tokens = await this.generateTokenPair(user);
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
+      },
+      ...tokens,
+    };
   }
+
+  private generateOtp(): string {
+    return String(randomInt(100000, 999999));
+  }
+
+  async getMe(userId: string) {
+  const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new UnauthorizedException('User tidak ditemukan');
+
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    avatarUrl: user.avatarUrl,
+    emailVerified: user.emailVerified,
+    phoneVerified: user.phoneVerified,
+  };
+}
+
+async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
+  const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+  // Selalu return sukses meski email tidak ditemukan — mencegah email enumeration
+  if (!user || !user.passwordHash) {
+    this.logger.warn(`Forgot password requested for non-existent/non-password email: ${dto.email}`);
+    return { message: 'Jika email terdaftar, link reset password telah dikirim' };
+  }
+
+  const cooldownKey = `reset_password:${user.id}:cooldown`;
+  const onCooldown = await this.redis.client.get(cooldownKey);
+  if (onCooldown) {
+    throw new BadRequestException('Tunggu sebentar sebelum minta link reset baru');
+  }
+
+  const token = randomBytes(32).toString('hex');
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+
+  await this.redis.client.setex(`reset_password:${tokenHash}`, RESET_TOKEN_TTL_SECONDS, user.id);
+  await this.redis.client.setex(cooldownKey, RESET_COOLDOWN_SECONDS, '1');
+
+  const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:3001');
+  const resetUrl = `${frontendUrl}/auth/reset-password?token=${token}`;
+
+  await this.notification.sendPasswordResetLink(user.email!, user.name, resetUrl);
+
+  this.logger.log(`Password reset link generated for: ${dto.email}`);
+  return { message: 'Jika email terdaftar, link reset password telah dikirim' };
+}
+
+async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+  const tokenHash = createHash('sha256').update(dto.token).digest('hex');
+  const userId = await this.redis.client.get(`reset_password:${tokenHash}`);
+
+  if (!userId) {
+    throw new BadRequestException('Link reset password tidak valid atau sudah expired');
+  }
+
+  const passwordHash = await bcrypt.hash(dto.password, 12);
+
+  await this.prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash },
+  });
+
+  // Invalidate token setelah dipakai
+  await this.redis.client.del(`reset_password:${tokenHash}`);
+
+  // Invalidate semua refresh token user ini — paksa logout semua device
+  await this.redis.client.del(`refresh_token:${userId}`);
+
+  this.logger.log(`Password reset successful for user: ${userId}`);
+  return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
+}
 }

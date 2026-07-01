@@ -8,8 +8,12 @@ import * as Midtrans from 'midtrans-client';
 import { Prisma } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+<<<<<<< HEAD
 import { SeatMapService } from '@modules/schedules/seat-map.service';
 
+=======
+import { SeatMapService } from '../schedules/seat-map.service';
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
 export interface MidtransNotification {
   order_id: string;
@@ -35,6 +39,7 @@ export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly seatMapService: SeatMapService,
     @Inject(MIDTRANS_CLIENT) private readonly midtrans: Midtrans.Snap,
     @InjectQueue('ticket') private readonly ticketQueue: Queue,
     private readonly setMapService: SeatMapService,
@@ -192,6 +197,7 @@ export class PaymentService {
     booking: { id: string; scheduleId: string; seats: { scheduleSeat: { id: string } }[] },
     bookingCode: string,
   ): Promise<void> {
+<<<<<<< HEAD
 
     const currentBooking = await this.prisma.booking.findUnique({
     where: { id: booking.id },
@@ -204,6 +210,18 @@ export class PaymentService {
     );
     return;
   }
+=======
+    // ← Fix poin 2: cek status booking sebelum konfirmasi
+    const currentBooking = await this.prisma.booking.findUnique({
+      where: { id: booking.id },
+      select: { status: true },
+    });
+
+    if (!currentBooking || currentBooking.status !== BookingStatus.PENDING) {
+      this.logger.warn(`Webhook skip: booking ${bookingCode} status is ${currentBooking?.status}`);
+      return;
+    }
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
     const scheduleSeatIds = booking.seats.map((s) => s.scheduleSeat.id);
 
@@ -223,6 +241,7 @@ export class PaymentService {
         data: { status: 'BOOKED', lockedBy: null, lockedUntil: null },
       });
 
+<<<<<<< HEAD
       const availableCount = await tx.scheduleSeat.count({
       where: { scheduleId: booking.scheduleId, status: 'AVAILABLE' },
     });
@@ -236,9 +255,26 @@ export class PaymentService {
     });
 
     await this.setMapService.invalidateSeatMap(booking.scheduleId);
+=======
+      // ← Fix poin 20: update isSoldOut jika semua kursi sudah BOOKED
+      const availableCount = await tx.scheduleSeat.count({
+        where: { scheduleId: booking.scheduleId, status: 'AVAILABLE' },
+      });
+
+      if (availableCount === 0) {
+        await tx.schedule.update({
+          where: { id: booking.scheduleId },
+          data: { isSoldOut: true },
+        });
+      }
+    });
+
+    // ← Fix poin 4: invalidate seat map cache
+    await this.seatMapService.invalidateSeatMap(booking.scheduleId);
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
 
     await this.ticketQueue.add(
-      'generate-tickets',
+      'generate-ticket',
       { bookingCode },
       { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
     );
@@ -261,18 +297,23 @@ export class PaymentService {
           cancellationReason: 'Pembayaran gagal atau dibatalkan',
         },
       });
-
       await tx.payment.update({
         where: { bookingId: booking.id },
         data: { status: PaymentStatus.FAILED },
       });
-
       await tx.scheduleSeat.updateMany({
         where: { id: { in: scheduleSeatIds } },
         data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
       });
     });
+<<<<<<< HEAD
     await this.setMapService.invalidateSeatMap(booking.scheduleId);
+=======
+
+    // ← Fix poin 4: invalidate seat map cache
+    await this.seatMapService.invalidateSeatMap(booking.scheduleId);
+
+>>>>>>> 5ef2ed08aadf0d26425b7f51e483aaab8eb80ef3
     this.logger.log(`Payment FAILED: booking ${bookingCode} CANCELLED`);
   }
 }
