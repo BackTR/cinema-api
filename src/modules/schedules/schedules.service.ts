@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { SeatMapService, SeatMapResult } from './seat-map.service';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { QueryScheduleDto } from './dto/query-schedule.dto';
@@ -13,15 +14,24 @@ interface PaginatedResult<T> {
 @Injectable()
 export class SchedulesService {
   private readonly logger = new Logger(SchedulesService.name);
+  private readonly CACHE_TTL = 300;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly seatMapService: SeatMapService,
+    private readonly redis: RedisService,
   ) {}
 
   async findAll(query: QueryScheduleDto): Promise<PaginatedResult<Schedule>> {
     const { movieId, cinemaId, date, page, limit } = query;
     const skip = (page - 1) * limit;
+
+    const cacheKey = `schedules:list:${JSON.stringify(query)}`;
+    const cached = await this.redis.client.get(cacheKey);
+    if (cached) {
+      this.logger.debug(`Cache hit: ${cacheKey}`);
+      return JSON.parse(cached) as PaginatedResult<Schedule>;
+    }
 
     // ← Fix poin 3 & 19: pisahkan filter date dan filter future
     let showTimeFilter: Prisma.ScheduleWhereInput['showTime'];
@@ -72,10 +82,14 @@ export class SchedulesService {
       this.prisma.schedule.count({ where }),
     ]);
 
-    return {
+    const result = {
       data: schedules,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
+
+    await this.redis.client.setex(cacheKey, this.CACHE_TTL, JSON.stringify(result));
+
+    return result;
   }
 
   async findOne(id: string): Promise<Schedule> {
@@ -147,6 +161,8 @@ export class SchedulesService {
       return newSchedule;
     });
 
+    await this.invalidateListCache();
+
     return schedule;
   }
 
@@ -157,10 +173,14 @@ export class SchedulesService {
 
   async deactivate(id: string): Promise<Schedule> {
     await this.findOne(id);
-    return this.prisma.schedule.update({
+    const updated = await this.prisma.schedule.update({
       where: { id },
       data: { isActive: false },
     });
+
+    await this.invalidateListCache();
+
+    return updated;
   }
 
   async getCinemas() {
@@ -207,7 +227,7 @@ export class SchedulesService {
   ) {
     await this.findOne(scheduleId);
 
-    return this.prisma.pricingRule.upsert({
+    const rule = await this.prisma.pricingRule.upsert({
       where: {
         scheduleId_seatType_pricingType: {
           scheduleId,
@@ -224,5 +244,53 @@ export class SchedulesService {
         isActive: true,
       },
     });
+
+    await this.invalidateListCache();
+
+    return rule;
+  }
+
+  private async invalidateListCache(): Promise<void> {
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.client.scan(cursor, 'MATCH', 'schedules:list:*', 'COUNT', 100);
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await this.redis.client.del(...keys);
+      }
+    } while (cursor !== '0');
+  }
+
+    async getAvailableDates(
+    movieId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<{ dates: string[] }> {
+    const start = new Date(`${startDate}T00:00:00+07:00`);
+    const end = new Date(`${endDate}T23:59:59+07:00`);
+
+    const schedules = await this.prisma.schedule.findMany({
+      where: {
+        movieId,
+        isActive: true,
+        isSoldOut: false,
+        showTime: { gte: start, lte: end },
+      },
+      select: { showTime: true },
+      distinct: ['showTime'],
+    });
+
+    // Extract unique dates dalam WIB
+    const dates = [
+      ...new Set(
+        schedules.map((s) =>
+          new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(
+            s.showTime,
+          ),
+        ),
+      ),
+    ];
+
+    return { dates };
   }
 }

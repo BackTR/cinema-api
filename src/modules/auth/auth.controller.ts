@@ -28,6 +28,8 @@ import {
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { CheckPhoneSchema } from './dto/check-phone.dto';
+import { ForgotPasswordDto, ForgotPasswordSchema } from './dto/forgot-password.dto';
+import { ResetPasswordDto, ResetPasswordSchema } from './dto/reset-password.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -149,4 +151,20 @@ export class AuthController {
     await this.authService.logout(user.sub);
     return { message: 'Logout berhasil' };
   }
+
+  @Post('forgot-password')
+@HttpCode(HttpStatus.OK)
+async forgotPassword(
+  @Body(new ZodValidationPipe(ForgotPasswordSchema)) dto: ForgotPasswordDto,
+) {
+  return this.authService.forgotPassword(dto);
+}
+
+@Post('reset-password')
+@HttpCode(HttpStatus.OK)
+async resetPassword(
+  @Body(new ZodValidationPipe(ResetPasswordSchema)) dto: ResetPasswordDto,
+) {
+  return this.authService.resetPassword(dto);
+}
 }

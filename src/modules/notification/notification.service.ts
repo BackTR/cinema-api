@@ -178,4 +178,45 @@ export class NotificationService {
       throw error;
     }
   }
+
+    async sendPasswordResetLink(email: string, name: string, resetUrl: string): Promise<void> {
+    const fromName = this.config.get('MAIL_FROM_NAME', 'Cinema App');
+    const fromEmail = this.config.getOrThrow<string>('MAIL_FROM');
+
+    try {
+      const { error } = await this.resend.emails.send({
+        from: `${fromName} <${fromEmail}>`,
+        to: email,
+        subject: 'Reset Password — Cinema App',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
+            <div style="background: #1a1a2e; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+              <h1 style="margin: 0;">🎬 Cinema App</h1>
+            </div>
+            <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; text-align: center;">
+              <p>Halo <strong>${name}</strong>,</p>
+              <p>Kami menerima permintaan reset password untuk akun Anda. Klik tombol di bawah untuk membuat password baru:</p>
+              <a href="${resetUrl}" style="display: inline-block; background: #dc2626; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; margin: 20px 0;">
+                Reset Password
+              </a>
+              <p style="color: #666; font-size: 14px;">Link ini berlaku selama 1 jam.</p>
+              <p style="color: #999; font-size: 12px; margin-top: 30px;">
+                Jika Anda tidak meminta reset password, abaikan email ini. Password Anda tidak akan berubah.
+              </p>
+            </div>
+          </div>
+        `,
+      });
+
+      if (error) {
+        this.logger.error(`Resend error: ${JSON.stringify(error)}`);
+        throw new Error('Gagal mengirim email reset password');
+      }
+
+      this.logger.log(`Password reset link sent to ${email}`);
+    } catch (error) {
+      this.logger.error(`Failed to send reset link to ${email}:`, error);
+      throw error;
+    }
+  }
 }

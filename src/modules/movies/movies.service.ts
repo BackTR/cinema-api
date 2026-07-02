@@ -146,7 +146,13 @@ export class MoviesService {
   }
 
   private async invalidateListCache(): Promise<void> {
-    const keys = await this.redis.client.keys('movies:list:*');
-    if (keys.length > 0) await this.redis.client.del(...keys);
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.client.scan(cursor, 'MATCH', 'movies:list:*', 'COUNT', 100);
+      cursor = nextCursor;
+      if (keys.length > 0) {
+        await this.redis.client.del(...keys);
+      }
+    } while (cursor !== '0');
   }
 }

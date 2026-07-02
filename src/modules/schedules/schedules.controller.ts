@@ -86,4 +86,13 @@ export class SchedulesController {
   ) {
     return this.schedulesService.createPricingRule(id, dto);
   }
+
+  @Get('available-dates')
+  async getAvailableDates(
+    @Query('movieId') movieId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return this.schedulesService.getAvailableDates(movieId, startDate, endDate);
+  }
 }
