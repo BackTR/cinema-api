@@ -260,4 +260,37 @@ export class SchedulesService {
       }
     } while (cursor !== '0');
   }
+
+    async getAvailableDates(
+    movieId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<{ dates: string[] }> {
+    const start = new Date(`${startDate}T00:00:00+07:00`);
+    const end = new Date(`${endDate}T23:59:59+07:00`);
+
+    const schedules = await this.prisma.schedule.findMany({
+      where: {
+        movieId,
+        isActive: true,
+        isSoldOut: false,
+        showTime: { gte: start, lte: end },
+      },
+      select: { showTime: true },
+      distinct: ['showTime'],
+    });
+
+    // Extract unique dates dalam WIB
+    const dates = [
+      ...new Set(
+        schedules.map((s) =>
+          new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(
+            s.showTime,
+          ),
+        ),
+      ),
+    ];
+
+    return { dates };
+  }
 }

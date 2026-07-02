@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y openssl
 
 COPY package*.json ./
 
-RUN npm ci
+RUN npm install && npm cache clean --force
 
 COPY . .
 
