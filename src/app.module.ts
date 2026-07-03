@@ -29,6 +29,8 @@ import { QueueModule } from './queues/queue.module';
           host: config.getOrThrow<string>('REDIS_HOST'),
           port: config.getOrThrow<number>('REDIS_PORT'),
           password: config.getOrThrow<string>('REDIS_PASSWORD'),
+          tls: config.get('REDIS_TLS') === 'true' ? {} : undefined,
+          maxRetriesPerRequest: null, // wajib untuk BullMQ
         },
       }),
       inject: [ConfigService],
