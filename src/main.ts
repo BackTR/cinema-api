@@ -29,4 +29,7 @@ async function bootstrap(): Promise<void> {
   logger.log(`Application running on http://localhost:${port}/api/v1`);
 }
 
-void bootstrap();
+bootstrap().catch((err) => {
+  console.error('❌ Bootstrap failed:', err);
+  process.exit(1);
+});
