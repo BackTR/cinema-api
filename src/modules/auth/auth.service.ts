@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -21,6 +22,8 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { User, AuthProvider } from '@prisma/client';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 export interface TokenPair {
   accessToken: string;
@@ -368,58 +371,148 @@ export class AuthService {
   };
 }
 
-async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
-  const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
-  // Selalu return sukses meski email tidak ditemukan — mencegah email enumeration
-  if (!user || !user.passwordHash) {
-    this.logger.warn(`Forgot password requested for non-existent/non-password email: ${dto.email}`);
+    // Selalu return sukses meski email tidak ditemukan — mencegah email enumeration
+    if (!user || !user.passwordHash) {
+      this.logger.warn(`Forgot password requested for non-existent/non-password email: ${dto.email}`);
+      return { message: 'Jika email terdaftar, link reset password telah dikirim' };
+    }
+
+    const cooldownKey = `reset_password:${user.id}:cooldown`;
+    const onCooldown = await this.redis.client.get(cooldownKey);
+    if (onCooldown) {
+      throw new BadRequestException('Tunggu sebentar sebelum minta link reset baru');
+    }
+
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    await this.redis.client.setex(`reset_password:${tokenHash}`, RESET_TOKEN_TTL_SECONDS, user.id);
+    await this.redis.client.setex(cooldownKey, RESET_COOLDOWN_SECONDS, '1');
+
+    const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:3001');
+    const resetUrl = `${frontendUrl}/auth/reset-password?token=${token}`;
+
+    await this.notification.sendPasswordResetLink(user.email!, user.name, resetUrl);
+
+    this.logger.log(`Password reset link generated for: ${dto.email}`);
     return { message: 'Jika email terdaftar, link reset password telah dikirim' };
   }
 
-  const cooldownKey = `reset_password:${user.id}:cooldown`;
-  const onCooldown = await this.redis.client.get(cooldownKey);
-  if (onCooldown) {
-    throw new BadRequestException('Tunggu sebentar sebelum minta link reset baru');
+  async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+    const tokenHash = createHash('sha256').update(dto.token).digest('hex');
+    const userId = await this.redis.client.get(`reset_password:${tokenHash}`);
+
+    if (!userId) {
+      throw new BadRequestException('Link reset password tidak valid atau sudah expired');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    // Invalidate token setelah dipakai
+    await this.redis.client.del(`reset_password:${tokenHash}`);
+
+    // Invalidate semua refresh token user ini — paksa logout semua device
+    await this.redis.client.del(`refresh_token:${userId}`);
+
+    this.logger.log(`Password reset successful for user: ${userId}`);
+    return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
   }
 
-  const token = randomBytes(32).toString('hex');
-  const tokenHash = createHash('sha256').update(token).digest('hex');
-
-  await this.redis.client.setex(`reset_password:${tokenHash}`, RESET_TOKEN_TTL_SECONDS, user.id);
-  await this.redis.client.setex(cooldownKey, RESET_COOLDOWN_SECONDS, '1');
-
-  const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:3001');
-  const resetUrl = `${frontendUrl}/auth/reset-password?token=${token}`;
-
-  await this.notification.sendPasswordResetLink(user.email!, user.name, resetUrl);
-
-  this.logger.log(`Password reset link generated for: ${dto.email}`);
-  return { message: 'Jika email terdaftar, link reset password telah dikirim' };
-}
-
-async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
-  const tokenHash = createHash('sha256').update(dto.token).digest('hex');
-  const userId = await this.redis.client.get(`reset_password:${tokenHash}`);
-
-  if (!userId) {
-    throw new BadRequestException('Link reset password tidak valid atau sudah expired');
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+  // Cek phone sudah dipakai user lain
+  if (dto.phone) {
+    const existing = await this.prisma.user.findFirst({
+      where: { phone: dto.phone, NOT: { id: userId } },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException('Nomor HP sudah digunakan akun lain');
+    }
   }
 
-  const passwordHash = await bcrypt.hash(dto.password, 12);
-
-  await this.prisma.user.update({
+  const updated = await this.prisma.user.update({
     where: { id: userId },
-    data: { passwordHash },
+    data: {
+      ...(dto.name && { name: dto.name }),
+      ...(dto.phone !== undefined && { phone: dto.phone || null }),
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      role: true,
+      avatarUrl: true,
+      emailVerified: true,
+      phoneVerified: true,
+    },
   });
 
-  // Invalidate token setelah dipakai
-  await this.redis.client.del(`reset_password:${tokenHash}`);
-
-  // Invalidate semua refresh token user ini — paksa logout semua device
-  await this.redis.client.del(`refresh_token:${userId}`);
-
-  this.logger.log(`Password reset successful for user: ${userId}`);
-  return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
+  this.logger.log(`Profile updated for user: ${userId}`);
+  return updated;
 }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user) throw new NotFoundException('User tidak ditemukan');
+
+    // User OAuth tanpa password tidak bisa ganti password via ini
+    if (!user.passwordHash) {
+      throw new BadRequestException(
+        'Akun ini menggunakan login sosial. Tidak ada password yang bisa diubah.',
+      );
+    }
+
+    const isMatch = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new BadRequestException('Password saat ini salah');
+    }
+
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException('Password baru tidak boleh sama dengan password lama');
+    }
+
+    const newHash = await bcrypt.hash(dto.newPassword, 12);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash },
+    });
+
+    // Invalidate semua refresh token — paksa login ulang di semua device
+    await this.redis.client.del(`refresh_token:${userId}`);
+
+    this.logger.log(`Password changed for user: ${userId}`);
+    return { message: 'Password berhasil diubah. Silakan login ulang.' };
+  }
+
+  async getBookingStats(userId: string) {
+    const [total, confirmed, pending, cancelled] = await Promise.all([
+      this.prisma.booking.count({ where: { userId } }),
+      this.prisma.booking.count({ where: { userId, status: 'CONFIRMED' } }),
+      this.prisma.booking.count({ where: { userId, status: 'PENDING' } }),
+      this.prisma.booking.count({ where: { userId, status: 'CANCELLED' } }),
+    ]);
+
+    const totalSpent = await this.prisma.payment.aggregate({
+      where: { booking: { userId }, status: 'PAID' },
+      _sum: { amount: true },
+    });
+
+    return {
+      total,
+      confirmed,
+      pending,
+      cancelled,
+      totalSpent: Number(totalSpent._sum.amount ?? 0),
+    };
+  }
 }

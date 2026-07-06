@@ -69,16 +69,30 @@ export class MoviesService {
     return result;
   }
 
-  async findOne(id: string): Promise<Movie> {
+  async findOne(id: string) {
     const cacheKey = `movies:${id}`;
     const cached = await this.redis.client.get(cacheKey);
-    if (cached) return JSON.parse(cached) as Movie;
+    if (cached) return JSON.parse(cached);
 
-    const movie = await this.prisma.movie.findUnique({ where: { id } });
+    const [movie, reviewStats] = await Promise.all([
+      this.prisma.movie.findUnique({ where: { id } }),
+      this.prisma.review.aggregate({
+        where: { movieId: id, isVisible: true },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
+    ]);
+
     if (!movie) throw new NotFoundException(`Film dengan ID ${id} tidak ditemukan`);
 
-    await this.redis.client.setex(cacheKey, this.CACHE_TTL, JSON.stringify(movie));
-    return movie;
+    const result = {
+      ...movie,
+      averageRating: Number((reviewStats._avg.rating ?? 0).toFixed(1)),
+      totalReviews: reviewStats._count.rating,
+    };
+
+    await this.redis.client.setex(cacheKey, this.CACHE_TTL, JSON.stringify(result));
+    return result;
   }
 
   async create(dto: CreateMovieDto): Promise<Movie> {

@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { SeatMapService } from '../schedules/seat-map.service';
+import { NotificationCenterService } from '../notification-center/notification-center.service';
 
 export interface MidtransNotification {
   order_id: string;
@@ -37,6 +38,7 @@ export class PaymentService {
     private readonly seatMapService: SeatMapService,
     @Inject(MIDTRANS_CLIENT) private readonly midtrans: Midtrans.Snap,
     @InjectQueue('ticket') private readonly ticketQueue: Queue,
+    private readonly notifService: NotificationCenterService,
   ) {}
 
   async initiatePayment(bookingCode: string, userId: string) {
@@ -242,6 +244,14 @@ export class PaymentService {
       { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
     );
 
+            await this.notifService.create({
+          userId: booking.id, // booking.userId
+          type: 'PAYMENT_SUCCESS',
+          title: '✅ Pembayaran Berhasil!',
+          message: `Booking ${bookingCode} telah dikonfirmasi. E-ticket siap diunduh.`,
+          data: { bookingCode },
+        });
+
     this.logger.log(`Payment SUCCESS: booking ${bookingCode} CONFIRMED`);
   }
 
@@ -269,6 +279,14 @@ export class PaymentService {
         data: { status: 'AVAILABLE', lockedBy: null, lockedUntil: null },
       });
     });
+
+      await this.notifService.create({
+        userId: booking.id,
+        type: 'PAYMENT_FAILED',
+        title: '❌ Pembayaran Gagal',
+        message: `Pembayaran untuk booking ${bookingCode} gagal. Kursi telah dibebaskan.`,
+        data: { bookingCode },
+      });
 
     // ← Fix poin 4: invalidate seat map cache
     await this.seatMapService.invalidateSeatMap(booking.scheduleId);

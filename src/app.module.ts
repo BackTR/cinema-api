@@ -17,6 +17,9 @@ import { NotificationModule } from './modules/notification/notification.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './modules/health/health.module';
 import { QueueModule } from './queues/queue.module';
+import { UploadModule } from './modules/upload/upload.module';
+import { ReviewModule } from './modules/review/review.module';
+import { NotificationCenterModule } from './modules/notification-center/notification-center.module';
 
 @Module({
   imports: [
@@ -47,6 +50,9 @@ import { QueueModule } from './queues/queue.module';
     AdminModule,
     HealthModule,
     QueueModule,
+    UploadModule,
+    ReviewModule,
+    NotificationCenterModule,
   ],
   providers: [
     {
