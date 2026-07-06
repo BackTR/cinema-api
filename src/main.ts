@@ -16,7 +16,7 @@ async function bootstrap(): Promise<void> {
   app.use(compression()); // ← tetap sama
 
   app.enableCors({
-    origin: config.get('NODE_ENV') === 'production' ? ['https://yourdomain.com'] : '*',
+    origin: config.get('NODE_ENV') === 'production' ? ['https://cinema-web-8as9.vercel.app'] : '*',
     credentials: true,
   });
 
