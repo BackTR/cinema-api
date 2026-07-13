@@ -22,6 +22,6 @@ import { NotificationModule } from '../notification/notification.module';
     JwtStrategy,
     JwtRefreshStrategy,
   ],
-  exports: [AuthService],
+  exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

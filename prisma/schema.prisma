@@ -78,6 +78,17 @@ enum AuthProvider {
   FACEBOOK
 }
 
+  enum NotificationType {
+    BOOKING_CONFIRMED
+    BOOKING_EXPIRED
+    BOOKING_CANCELLED
+    PAYMENT_SUCCESS
+    PAYMENT_FAILED
+    REMINDER_1H  // 1 jam sebelum tayang
+    REVIEW_REMINDER
+    SYSTEM
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -97,6 +108,8 @@ model User {
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
   bookings        Booking[]
+  reviews         Review[]
+  notifications   Notification[]
 
   @@index([isActive])
   @@index([role])
@@ -122,6 +135,7 @@ model Movie {
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
   schedules       Schedule[]
+  reviews         Review[]
 
   @@index([isActive])
   @@index([releaseDate])
@@ -183,8 +197,8 @@ model Schedule {
   id            String         @id @default(uuid()) @db.Uuid
   movieId       String         @map("movie_id") @db.Uuid
   studioId      String         @map("studio_id") @db.Uuid
-  showTime      DateTime       @map("show_time")
-  endTime       DateTime       @map("end_time")
+  showTime      DateTime       @map("show_time")@db.Timestamptz(6)
+  endTime       DateTime       @map("end_time") @db.Timestamptz(6)
   basePrice     Decimal        @map("base_price") @db.Decimal(12, 2)
   language      MovieLanguage  @default(SUBTITLED)
   format        MovieFormat    @default(TWO_D)
@@ -243,6 +257,7 @@ model Booking {
   schedule           Schedule      @relation(fields: [scheduleId], references: [id])
   seats              BookingSeat[]
   payment            Payment?
+  review             Review?
 
   @@index([userId])
   @@index([userId, createdAt])
@@ -305,4 +320,43 @@ model PricingRule {
   @@index([scheduleId])
   @@index([isActive])
   @@map("pricing_rules")
+}
+
+model Review {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  movieId    String   @map("movie_id") @db.Uuid
+  bookingId  String   @unique @map("booking_id") @db.Uuid
+  rating     Int      // 1-5
+  comment    String?  @db.Text
+  isVisible  Boolean  @default(true) @map("is_visible")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  movie   Movie   @relation(fields: [movieId], references: [id])
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@unique([userId, movieId]) // 1 user hanya bisa review 1 film
+  @@index([movieId, isVisible])
+  @@index([userId])
+  @@map("reviews")
+}
+
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?            // payload tambahan (bookingCode, movieId, dll)
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }

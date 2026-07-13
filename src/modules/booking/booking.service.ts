@@ -15,6 +15,7 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { nanoid } from 'nanoid';
 import { SeatMapService } from '../schedules/seat-map.service';
+import { NotificationCenterService } from '../notification-center/notification-center.service';
 
 const BOOKING_EXPIRY_MINUTES = 10;
 
@@ -27,6 +28,7 @@ export class BookingService {
     private readonly seatLock: SeatLockService,
     private readonly seatMapService: SeatMapService,
     @InjectQueue('booking') private readonly bookingQueue: Queue,
+    private readonly notifService: NotificationCenterService,
   ) {}
 
   async createBooking(userId: string, dto: CreateBookingDto) {
@@ -306,6 +308,16 @@ export class BookingService {
       this.logger.debug(`Booking ${bookingId} skip expire — status: ${booking?.status}`);
       return;
     }
+
+    if (booking) {
+    await this.notifService.create({
+      userId: booking.userId,
+      type: 'BOOKING_EXPIRED',
+      title: '⏰ Booking Kadaluarsa',
+      message: 'Waktu pembayaran habis. Booking kamu telah dibatalkan otomatis.',
+      data: { bookingId },
+    });
+  }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.booking.update({

@@ -9,6 +9,7 @@ import {
   Req,
   Res,
   Query,
+  Patch,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './guards/jwt.guard';
@@ -30,6 +31,9 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import { CheckPhoneSchema } from './dto/check-phone.dto';
 import { ForgotPasswordDto, ForgotPasswordSchema } from './dto/forgot-password.dto';
 import { ResetPasswordDto, ResetPasswordSchema } from './dto/reset-password.dto';
+import { UpdateProfileSchema, UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordSchema, ChangePasswordDto } from './dto/change-password.dto';
+
 
 @Controller('auth')
 export class AuthController {
@@ -42,6 +46,31 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async getMe(@CurrentUser() user: JwtPayload) {
     return this.authService.getMe(user.sub);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  async updateProfile(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(UpdateProfileSchema)) dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(user.sub, dto);
+  }
+
+  @Patch('me/change-password')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(ChangePasswordSchema)) dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(user.sub, dto);
+  }
+
+  @Get('me/stats')
+  @UseGuards(JwtAuthGuard)
+  async getStats(@CurrentUser() user: JwtPayload) {
+    return this.authService.getBookingStats(user.sub);
   }
 
   // ─── Email + Password ──────────────────────────────────────────
