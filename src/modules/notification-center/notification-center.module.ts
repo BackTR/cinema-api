@@ -1,4 +1,3 @@
-// src/modules/notification-center/notification-center.module.ts
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { JwtModule } from '@nestjs/jwt';
@@ -9,10 +8,10 @@ import { SseService } from './sse.service';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    JwtModule.register({}), // ← tambah, config dari env langsung
+    JwtModule.register({}),
   ],
   controllers: [NotificationCenterController],
   providers: [NotificationCenterService, SseService],
-  exports: [NotificationCenterService],
+  exports: [NotificationCenterService, SseService], // ← pastikan keduanya di-export
 })
 export class NotificationCenterModule {}

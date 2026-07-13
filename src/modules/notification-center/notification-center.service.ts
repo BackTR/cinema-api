@@ -131,19 +131,20 @@ interface CreateNotificationDto {
             schedule: {
             showTime: { gte: oneHourLater, lte: oneHour15Later },
             },
-            // Belum dapat reminder (cek via notifikasi yang sudah ada)
-            user: {
-            notifications: {
-                none: {
-                type: 'REMINDER_1H',
-                data: { path: ['bookingCode'], equals: undefined },
-                createdAt: { gte: new Date(now.getTime() - 90 * 60 * 1000) },
-                },
-            },
-            },
         },
         include: {
-            user: { select: { id: true, name: true } },
+            user: {
+                select: {
+                    id: true,
+                    name: true,
+                    notifications: {
+                        where: {
+                            type: 'REMINDER_1H',
+                            createdAt: { gte: new Date(now.getTime() - 90 * 60 * 1000) },
+                        },
+                    },
+                },
+            },
             schedule: {
             include: {
                 movie: { select: { title: true } },
@@ -153,22 +154,32 @@ interface CreateNotificationDto {
         },
         });
 
+        let sentCount = 0;
         for (const booking of upcomingBookings) {
-        await this.create({
-            userId: booking.userId,
-            type: 'REMINDER_1H',
-            title: '🎬 Film Kamu Segera Tayang!',
-            message: `${booking.schedule.movie.title} akan tayang 1 jam lagi di ${booking.schedule.studio.cinema.name}. Jangan sampai terlambat!`,
-            data: {
-            bookingCode: booking.bookingCode,
-            movieTitle: booking.schedule.movie.title,
-            showTime: booking.schedule.showTime.toISOString(),
-            },
-        });
+            // Cek apakah reminder untuk bookingCode ini sudah pernah dikirim
+            const alreadySent = booking.user.notifications.some((n: any) => {
+                const data = n.data as Record<string, any> | null;
+                return data && data.bookingCode === booking.bookingCode;
+            });
+
+            if (alreadySent) continue;
+
+            await this.create({
+                userId: booking.userId,
+                type: 'REMINDER_1H',
+                title: '🎬 Film Kamu Segera Tayang!',
+                message: `${booking.schedule.movie.title} akan tayang 1 jam lagi di ${booking.schedule.studio.cinema.name}. Jangan sampai terlambat!`,
+                data: {
+                bookingCode: booking.bookingCode,
+                movieTitle: booking.schedule.movie.title,
+                showTime: booking.schedule.showTime.toISOString(),
+                },
+            });
+            sentCount++;
         }
 
-        if (upcomingBookings.length > 0) {
-        this.logger.log(`Sent ${upcomingBookings.length} showtime reminder(s)`);
+        if (sentCount > 0) {
+        this.logger.log(`Sent ${sentCount} showtime reminder(s)`);
         }
     }
 

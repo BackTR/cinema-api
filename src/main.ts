@@ -13,7 +13,16 @@ async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
   app.use(helmet());
-  app.use(compression()); // ← tetap sama
+  app.use(
+    compression({
+      filter: (req: any, res: any) => {
+        if (req.headers['accept'] === 'text/event-stream') {
+          return false;
+        }
+        return compression.filter(req, res);
+      },
+    }),
+  );
 
   app.enableCors({
     origin: config.get('NODE_ENV') === 'production' ? ['https://yourdomain.com'] : '*',
